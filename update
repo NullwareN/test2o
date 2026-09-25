@@ -6,11 +6,7 @@ repo_root="$script_dir"
 web_panel_root="$script_dir/catbot-ipc-web-panel-main"
 ipc_server_root="$script_dir/catbot-ipc-server-main"
 database_root="$script_dir/catbot-database"
-<<<<<<< HEAD
-nullhook_url="${CAT_NULLHOOK_URL:-https://github.com/NullwareN/test2o.git}"
-=======
 nullhook_url="${CAT_NULLHOOK_URL:-https://github.com/NullwareN/test}"
->>>>>>> c9c6a2a73357af8b5f49358af0b87c482e60281e
 install_root="${CATHOOK_ROOT:-/opt/cathook}"
 steamapps_detect_log="${CAT_STEAMAPPS_DETECT_LOG:-/tmp/cat-steamapps-detect.log}"
 shared_steamapps="/opt/steamapps"
