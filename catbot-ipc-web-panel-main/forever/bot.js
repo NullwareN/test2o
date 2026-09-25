@@ -3609,12 +3609,15 @@ class Bot extends EventEmitter {
         self.warnIfSteamVguiDowngradeMissing(self.steamLaunchRoot());
         self.time_steam_launch_started = Date.now();
         const steam_preload = steam_preload_value();
-        try {
-            ensure_bot_netns(self.botid);
-        } catch (error) {
-            const detail = (error.stderr && error.stderr.toString()) || error.message;
-            self.log(`[ERROR] Failed to prepare network namespace catbotns${self.botid}: ${detail.trim()}`);
-            return false;
+        const use_netns = process.env.CAT_USE_NETNS === '1';
+        if (use_netns) {
+            try {
+                ensure_bot_netns(self.botid);
+            } catch (error) {
+                const detail = (error.stderr && error.stderr.toString()) || error.message;
+                self.log(`[ERROR] Failed to prepare network namespace catbotns${self.botid}: ${detail.trim()}`);
+                return false;
+            }
         }
 
         self.procFirejailSteam = child_process.spawn(([this.shouldResetSteam, this.shouldResetSteam = 0][0]
@@ -3637,8 +3640,8 @@ class Bot extends EventEmitter {
             .replace("%DISPLAY%", shell_quote(display_value))
             .replace("%XAUTHORITY%", shell_quote(xauthority_path))
             // Network
-            .replace("%DNS%", '--dns=1.1.1.1 --dns=8.8.8.8')
-            .replace("%NETWORK%", `--netns=catbotns${self.botid}`)
+            .replace("%DNS%", use_netns ? '--dns=1.1.1.1 --dns=8.8.8.8' : '')
+            .replace("%NETWORK%", use_netns ? `--netns=catbotns${self.botid}` : '')
             // Home folder
             .replace("%HOME%", self.home.replace(/"/g, '\\"'))
             .replace("%STEAM%", steambin),
