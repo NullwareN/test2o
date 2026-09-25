@@ -621,6 +621,10 @@ class BotManager {
                         this.bots.splice(remove_index, 1);
                     continue;
                 }
+            } else {
+                if (!b.shouldRun && !b.stopped && !b.terminal_auth_state) {
+                    b.shouldRun = true;
+                }
             }
             try {
                 b.update(process_table, children_by_parent);
@@ -673,7 +677,7 @@ class BotManager {
             while (this.bots.length < this.quota && created_count < this.quota_creation_batch_limit) {
                 const bot = new Bot.bot(this.next_bot_id_for_fill());
                 bot.manager = this;
-                bot.shouldRun = false;
+                bot.shouldRun = true;
                 bot.shouldRestart = false;
                 this.bots.push(bot);
                 created_count++;
