@@ -23,6 +23,11 @@ for system_path_entry in /usr/local/sbin /usr/sbin /sbin; do
 done
 export PATH
 
+if [ "$(id -u)" -eq 0 ]; then
+    echo "This script must not be run as root. Run it as your normal Linux user." >&2
+    exit 1
+fi
+
 exec 9>"$start_lock"
 if ! flock -n 9; then
     lock_holder="$(head -n1 "$start_lock" 2>/dev/null | tr -cd '0-9')"
@@ -1527,11 +1532,6 @@ print_panel_password() {
 
 if [ "$(uname -s)" != "Linux" ]; then
     echo "./botpanel/start must run on the Linux VM, not Windows." >&2
-    exit 1
-fi
-
-if [ "$(id -u)" -eq 0 ]; then
-    echo "This script must not be run as root. Run it as your normal Linux user." >&2
     exit 1
 fi
 
