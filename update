@@ -244,13 +244,13 @@ ensure_nullhook_src() {
     if src="$(find_nullhook_src)"; then
         if [ "$src" != "$script_dir/nullhook" ] && [ ! -e "$script_dir/nullhook" ]; then
             ln -s "$src" "$script_dir/nullhook"
-            echo "Linked $script_dir/nullhook -> $src"
+            echo "Linked $script_dir/nullhook -> $src" >&2
         fi
         printf '%s\n' "$src"
         return 0
     fi
-    echo "Cloning nullhook into $script_dir/nullhook"
-    git clone --recurse-submodules "$nullhook_url" "$script_dir/nullhook"
+    echo "Cloning nullhook into $script_dir/nullhook" >&2
+    git clone --recurse-submodules "$nullhook_url" "$script_dir/nullhook" >&2
     printf '%s\n' "$script_dir/nullhook"
 }
 
