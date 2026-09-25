@@ -1,10 +1,5 @@
 #!/bin/bash
 
-if [ $EUID != 0 ]; then
-	echo "0"
-	exit
-fi
-
 panel_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$panel_dir" || exit 1
 

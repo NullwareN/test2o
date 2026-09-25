@@ -1190,6 +1190,13 @@ start_ipc_server() {
     sleep 1
     pkill -KILL -f "$install_root/ipc/bin/server -s" 2>/dev/null || true
 
+    # Force-release port in case previous server is still holding it
+    if command -v fuser > /dev/null 2>&1; then
+        fuser -k 7655/tcp 2>/dev/null || true
+        fuser -k "${port}/tcp" 2>/dev/null || true
+        sleep 1
+    fi
+
     rm -f /tmp/cat-ipc-server.pid /tmp/cat-ipc-server.log \
         "$install_root/ipc/cathook_followbot_server" /dev/shm/cathook_followbot_server 2>/dev/null || true
 

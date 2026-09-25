@@ -80,7 +80,7 @@ is_panel_process() {
     local cwd="$1"
     local cmd="$2"
     case "$cwd" in
-        */botpanel/catbot-ipc-web-panel-main)
+        */botpanel/catbot-ipc-web-panel-main|*/catbot-ipc-web-panel-main)
             [[ "$cmd" == bash\ ./run.sh* || "$cmd" == /bin/bash\ ./run.sh* ||
                "$cmd" == *"/node app.js "* || "$cmd" == *"/node app.js" ]]
             ;;
@@ -99,7 +99,7 @@ is_ipc_process() {
 
 is_bot_process() {
     case "$1" in
-        *--private=*/botpanel/user_instances/*) return 0 ;;
+        *--private=*/botpanel/user_instances/*|*--private=*/user_instances/*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -109,11 +109,13 @@ is_start_process() {
     local cwd="$2"
     local cmd="$3"
     [ -n "${START_PID-}" ] && [ "$pid" = "$START_PID" ] && return 1
-    if [[ "$cmd" == bash\ ./start* || "$cmd" == /bin/bash\ ./start* ]]; then
-        return 0
+    if [[ "$cmd" == bash\ ./start* || "$cmd" == /bin/bash\ ./start* || "$cmd" == *"start"* ]]; then
+        case "$cwd" in
+            */botpanel|*/test2o|*/Desktop/test2o) return 0 ;;
+        esac
     fi
     case "$cwd" in
-        */botpanel)
+        */botpanel|*/test2o|*/Desktop/test2o)
             [[ "$cmd" == bash\ ./start* || "$cmd" == /bin/bash\ ./start* ]]
             ;;
         *)
@@ -190,6 +192,11 @@ for proc in /proc/[0-9]*; do
 done
 exit "$leftovers"
 ROOT_STOP_SCRIPT
+
+# Force-release port 7655 in case the IPC server is still holding it
+if command -v fuser > /dev/null 2>&1; then
+    fuser -k 7655/tcp 2>/dev/null || true
+fi
 
 rm -f /tmp/pulsemodule.id 2>/dev/null || true
 echo "Stopped!"
