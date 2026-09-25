@@ -83,10 +83,15 @@ int main(int argc, char **argv)
         else if (arg == "--reset")
             reset_existing = true;
     }
-    (void)reset_existing;
+    // Remove stale shared memory before creating a fresh server instance
+    if (reset_existing)
+    {
+        boost::interprocess::shared_memory_object::remove(cathook_ipc_name);
+    }
 
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
+    std::signal(SIGHUP, signal_handler);
 
     try
     {

@@ -136,6 +136,9 @@ var server = app.listen(PORT, HOST, function () {
 });
 server.on('error', function (error) {
     log_process_error('server listen error', error);
+    if (error.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is in use. Run ./stop first, or set CAT_IPC_PORT to a different port.`);
+    }
     process.exit(1);
 });
 stoppable(server, 0);

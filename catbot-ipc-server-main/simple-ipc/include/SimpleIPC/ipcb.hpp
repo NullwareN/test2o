@@ -172,9 +172,9 @@ public:
 
         if (!is_ghost)
         {
-            heartbeat_thread = std::jthread(Heartbeat, &this->shutting_down, &memory->peer_data[client_id]);
+            heartbeat_thread = std::thread(Heartbeat, &this->shutting_down, &memory->peer_data[client_id]);
             if (!heartbeat_thread.joinable())
-                throw std::runtime_error("Failed to crate heartbeat thread: " + std::string(strerror(errno)));
+                throw std::runtime_error("Failed to create heartbeat thread: " + std::string(strerror(errno)));
         }
     }
 
@@ -335,7 +335,7 @@ private:
     const std::string name;
     bool process_old_commands{ true };
     const bool is_manager{ false };
-    std::jthread heartbeat_thread;
+    std::thread heartbeat_thread;
     bool shutting_down{false};
 };
 } // namespace cat_ipc

@@ -5,7 +5,7 @@ OUT_DIR = bin
 INSTALL_DIR ?= /opt/cathook/ipc
 TARGETS = server exec exec_all console
 
-CXXFLAGS ?= -std=c++23 -O2 -g -Wall -Wextra -fmessage-length=0
+CXXFLAGS ?= $(shell g++ -std=c++23 -x c++ -E /dev/null > /dev/null 2>&1 && echo "-std=c++23" || echo "-std=c++17") -O2 -g -Wall -Wextra -fmessage-length=0
 CXXFLAGS += -I$(CURDIR)/simple-ipc/include -I$(SRC_DIR)
 DEPFLAGS = -MMD -MP
 LDLIBS = -pthread -lrt

@@ -1194,7 +1194,16 @@ start_ipc_server() {
     if command -v fuser > /dev/null 2>&1; then
         fuser -k 7655/tcp 2>/dev/null || true
         fuser -k "${port}/tcp" 2>/dev/null || true
+        sleep 2
+    elif command -v ss > /dev/null 2>&1; then
+        # fallback: try pkill any process listening on the port
+        ss -tlnp "sport = :${port}" 2>/dev/null | awk 'NR>1{match(    # Force-release port in case previous server is still holding it
+    if command -v fuser > /dev/null 2>&1; then
+        fuser -k 7655/tcp 2>/dev/null || true
+        fuser -k "${port}/tcp" 2>/dev/null || true
         sleep 1
+    fi,/pid=([0-9]+)/,a); if(a[1]) print a[1]}' | xargs -r kill -9 2>/dev/null || true
+        sleep 2
     fi
 
     rm -f /tmp/cat-ipc-server.pid /tmp/cat-ipc-server.log \
