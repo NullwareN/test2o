@@ -7,10 +7,13 @@ set -u
 bridge="${CAT_BOT_BRIDGE:-catbotbr}"
 bridge_addr="${CAT_BOT_BRIDGE_ADDR:-10.249.0.1/24}"
 bridge_net="${CAT_BOT_BRIDGE_NET:-10.249.0.0/24}"
-vpn_if="${CATHOOK_NET_INTERFACE:-nordlynx}"
+vpn_if="${CATHOOK_NET_INTERFACE:-}"
+if [ -z "$vpn_if" ] || ! ip link show "$vpn_if" >/dev/null 2>&1; then
+	vpn_if="$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
+fi
 
-if ! ip link show "$vpn_if" >/dev/null 2>&1; then
-	echo "[net] missing VPN interface $vpn_if; not creating $bridge"
+if [ -z "$vpn_if" ] || ! ip link show "$vpn_if" >/dev/null 2>&1; then
+	echo "[net] missing network interface; not creating $bridge"
 	exit 0
 fi
 

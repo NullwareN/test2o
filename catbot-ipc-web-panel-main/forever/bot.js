@@ -131,7 +131,7 @@ function ensure_bot_netns(botid) {
     if (!Number.isSafeInteger(id) || id < 1 || id > 200)
         throw new Error(`invalid bot id for netns: ${botid}`);
 
-    const iface = USER.interface || get_default_network_interface() || 'eth0';
+    const iface = USER.interface || get_default_network_interface() || '';
     const script = `set -eu
 NS=catbotns${id}
 VETH=veth${id}
@@ -139,19 +139,27 @@ VPEER=vpeer${id}
 ADDR=10.200.${id}.1
 PEER=10.200.${id}.2
 OUT_IF="${iface}"
-if ! ip netns exec "$NS" ip link show lo >/dev/null 2>&1; then
-  ip netns del "$NS" >/dev/null 2>&1 || true
-  ip link del "$VETH" >/dev/null 2>&1 || true
-  ip netns add "$NS"
-  ip link add "$VETH" type veth peer name "$VPEER"
-  ip link set "$VPEER" netns "$NS"
-  ip addr add "$ADDR/24" dev "$VETH"
-  ip link set "$VETH" up
-  ip netns exec "$NS" ip addr add "$PEER/24" dev "$VPEER"
-  ip netns exec "$NS" ip link set "$VPEER" up
-  ip netns exec "$NS" ip link set lo up
-  ip netns exec "$NS" ip route add default via "$ADDR"
+if [ -z "$OUT_IF" ] || ! ip link show "$OUT_IF" >/dev/null 2>&1; then
+    OUT_IF="$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
 fi
+if [ -z "$OUT_IF" ]; then
+    OUT_IF="eth0"
+fi
+
+# Always clean up existing stale namespace and veth interface to ensure fresh routing
+ip netns del "$NS" >/dev/null 2>&1 || true
+ip link del "$VETH" >/dev/null 2>&1 || true
+
+ip netns add "$NS"
+ip link add "$VETH" type veth peer name "$VPEER"
+ip link set "$VPEER" netns "$NS"
+ip addr add "$ADDR/24" dev "$VETH"
+ip link set "$VETH" up
+ip netns exec "$NS" ip addr add "$PEER/24" dev "$VPEER"
+ip netns exec "$NS" ip link set "$VPEER" up
+ip netns exec "$NS" ip link set lo up
+ip netns exec "$NS" ip route add default via "$ADDR"
+
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 iptables -t nat -C POSTROUTING -s "$PEER/32" -o "$OUT_IF" -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s "$PEER/32" -o "$OUT_IF" -j MASQUERADE
 iptables -C FORWARD -i "$VETH" -o "$OUT_IF" -j ACCEPT 2>/dev/null || iptables -I FORWARD -i "$VETH" -o "$OUT_IF" -j ACCEPT
