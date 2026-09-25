@@ -1,0 +1,236 @@
+/* ============================================================
+   cathook panel — vgui.css
+   Base widget styles (inputs, table, checkboxes)
+   ============================================================ */
+
+.vgui-font {
+    color: #e8e8e8;
+    font-family: "Tahoma", "Segoe UI", sans-serif;
+    font-size: 12px;
+}
+
+/* ── Input base ───────────────────────────────────────────── */
+input {
+    text-align: left;
+    font-family: inherit;
+    font-size: 11px;
+}
+
+input:not([type=button]):not([type=checkbox]),
+.vgui-inset {
+    border: 1px solid #2a2a2a;
+    border-bottom-color: #444444;
+    border-right-color: #444444;
+    background: #0f0f0f;
+    color: #e8e8e8;
+    outline: none;
+    transition: border-color 0.1s;
+}
+
+input:not([type=button]):not([type=checkbox]):focus,
+.vgui-inset:focus {
+    border-color: #555555;
+    background: #141414;
+}
+
+input[type=button]:not(:active),
+.vgui-outset {
+    border: 1px solid #2a2a2a;
+    border-top-color: #444444;
+    border-left-color: #444444;
+    color: #cccccc;
+    background: #1e1e1e;
+    cursor: pointer;
+}
+
+input[type=button]:not(:active):hover,
+.vgui-outset:hover {
+    background: #2a2a2a;
+    color: #ffffff;
+}
+
+input[type=button]:active {
+    border: 1px solid #444444;
+    border-bottom-color: #222222;
+    border-right-color: #222222;
+    background: #111111;
+    color: #aaaaaa;
+}
+
+/* ── Container ────────────────────────────────────────────── */
+.vgui-container {
+    background: #0a0a0a;
+}
+
+/* ── Select ───────────────────────────────────────────────── */
+.vgui-select {
+    display: block;
+    min-width: 8em;
+    padding: 4px;
+    padding-right: 18px;
+    border: 1px solid #2a2a2a;
+    border-bottom-color: #444444;
+    border-right-color: #444444;
+    background: url('vgui-dropdown.png') #0f0f0f no-repeat right 3px center;
+    color: #e8e8e8;
+    font-family: inherit;
+    font-size: 11px;
+}
+
+.vgui-select-hidden { display: none; }
+
+.vgui-select-container { position: relative; }
+
+.vgui-select-list {
+    display: block;
+    overflow: hidden;
+    margin: 0;
+    box-sizing: border-box;
+    width: 100%;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    list-style: none;
+    z-index: 3;
+    padding: 0;
+    margin-top: 2px;
+    border: 1px solid #333333;
+    background: #111111;
+}
+
+.vgui-select-option {
+    padding: 4px 6px;
+    width: 100%;
+    font-size: 11px;
+    color: #cccccc;
+    cursor: pointer;
+}
+
+.vgui-select-option:hover {
+    background: #2a2a2a;
+    color: #ffffff;
+}
+
+::selection {
+    background: rgba(255,255,255,0.2);
+    color: #ffffff;
+}
+
+/* ── Table ────────────────────────────────────────────────── */
+.vgui-table {
+    font-size: 11px;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.vgui-table td {
+    padding: 4px 6px;
+    min-width: 3em;
+    line-height: 16px;
+}
+
+/* Alternating rows */
+.vgui-table tbody tr:nth-child(even) {
+    background: rgba(255,255,255,0.03);
+}
+
+/* Header row */
+.vgui-table tbody tr:first-child {
+    background: #1a1a1a;
+}
+
+.vgui-table tbody tr:first-child td {
+    border-bottom: 2px solid #333333;
+    padding: 6px 6px;
+}
+
+/* Row hover */
+.vgui-table tbody tr:not(:first-child):hover {
+    background: rgba(255,255,255,0.06);
+}
+
+/* ── Input sizing ─────────────────────────────────────────── */
+input:not([type=checkbox]) {
+    padding: 4px 6px;
+}
+
+input:not([type=checkbox]):not([type=button]) {
+    min-width: 50px;
+}
+
+input[type=button] {
+    min-width: 55px;
+    padding: 4px 8px;
+}
+
+/* ── Checkbox ─────────────────────────────────────────────── */
+input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    vertical-align: -2px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+input[type="checkbox"]:before {
+    border: 1px solid #444444;
+    border-bottom-color: #555555;
+    border-right-color: #555555;
+    background: #0f0f0f;
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+}
+
+input[type="checkbox"]:checked:before {
+    background: url('vgui-checkbox.png') #0f0f0f;
+    filter: invert(1) brightness(2);
+}
+
+input[type="checkbox"]:hover:before {
+    border-color: #666666;
+    background-color: #1a1a1a;
+}
+
+/* ── Number input — hide spinners ─────────────────────────── */
+input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: none;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* ── Button variants ──────────────────────────────────────── */
+.vgui-button-centered { text-align: center; }
+
+/* ── Disabled ─────────────────────────────────────────────── */
+[disabled], .vgui-disabled {
+    background: #141414 !important;
+    color: #444444 !important;
+    cursor: not-allowed !important;
+}
+
+/* ── Utility ──────────────────────────────────────────────── */
+.nopad    { padding: 0; }
+.vmiddle * { vertical-align: middle; }
+
+*:focus { outline: none; }
+
+hr {
+    border: 0;
+    border-top: 1px solid #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    margin: 6px 0;
+}
+
+option:hover {
+    background: #2a2a2a;
+    color: #ffffff;
+}

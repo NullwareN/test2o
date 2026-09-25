@@ -1,0 +1,38 @@
+#!/bin/bash
+
+if [ $EUID == 0 ]; then
+    echo "This script must not be run as root"
+    exit
+fi
+
+if ! [ -f "./kisak" ]; then
+	echo "This is not a legacy installation"
+	exit
+fi
+
+read -p "We will convert your existing legacy catbot-setup installation into a catbot-setup v2 installation. This will delete all steam instances and bot linux user accounts. Press enter to continue"
+
+kisak=`cat kisak`
+
+if [ -f ./users ]; then
+    for i in $(seq 1 $(cat ./users))
+    do
+        if ! [ -d "/home/$kisak-$i" ]; then
+            echo "No $kisak $i";
+            continue;
+        fi
+        echo "Deleting user $kisak-$i"
+        sudo groupdel $kisak-$i
+        sudo userdel -r $kisak-$i
+    done
+fi
+sudo groupdel "$(cat kisak)s"
+
+rm steams
+rm users
+rm kisak
+if mountpoint -q /opt/steamapps; then
+    sudo umount /opt/steamapps
+fi
+sudo rmdir /opt/steamapps 2>/dev/null || true
+exit 0

@@ -1,0 +1,415 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+database_root="$script_dir/catbot-database"
+user_instances_dir="$script_dir/user_instances"
+install_root="${CATHOOK_ROOT:-/opt/cathook}"
+shared_steamapps="/opt/steamapps"
+steamapps_detect_log="${CAT_STEAMAPPS_DETECT_LOG:-/tmp/cat-steamapps-detect.log}"
+
+usage() {
+    cat <<'EOF'
+Usage: ./fix-oldshi
+
+Repairs old botpanel Steam/navmesh path layouts:
+  - preserves any .nav files from old partial Steam paths into /opt/cathook/navmeshes
+  - replaces broken /opt/steamapps mounts/directories with a symlink to the real host steamapps
+  - removes stale generated /opt/steamapps data instead of creating large backups
+  - points bot user instance steamapps directories at /opt/steamapps
+  - copies preserved navmeshes back into the real TF2 maps directory
+
+Environment:
+  CATHOOK_ROOT=/opt/cathook
+  CAT_STEAMAPPS_PATH=/path/to/steamapps
+  CAT_STEAM_ROOT=/path/to/steam
+  CAT_FIX_OLD_PANEL_FORCE=1     Run even if botpanel/Steam/TF2 is active.
+EOF
+}
+
+log() {
+    printf '[fix-oldshi] %s\n' "$*"
+}
+
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        echo "sudo is required for system path repair." >&2
+        exit 1
+    fi
+}
+
+user_home_path() {
+    local user_name="${SUDO_USER:-$USER}"
+
+    if command -v getent >/dev/null 2>&1; then
+        getent passwd "$user_name" | awk -F: '{ print $6; exit }'
+        return
+    fi
+
+    printf '%s\n' "$HOME"
+}
+
+main_user_name() {
+    printf '%s\n' "${SUDO_USER:-$USER}"
+}
+
+main_user_id() {
+    id -u "$(main_user_name)" 2>/dev/null || id -u
+}
+
+main_group_id() {
+    id -g "$(main_user_name)" 2>/dev/null || id -g
+}
+
+tf2_install_ready_from_steamapps() {
+    local steamapps_path="$1"
+
+    [ -x "$steamapps_path/common/Team Fortress 2/tf_linux64" ]
+}
+
+path_has_entries() {
+    local target_path="$1"
+
+    find "$target_path" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .
+}
+
+resolved_path() {
+    readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+same_resolved_path() {
+    local left="$1"
+    local right="$2"
+
+    [ "$(resolved_path "$left")" = "$(resolved_path "$right")" ]
+}
+
+active_bot_processes() {
+    pgrep -f 'catbot-ipc-web-panel-main|firejail .*--name=b[0-9]+|tf_linux64' 2>/dev/null || true
+}
+
+refuse_if_panel_is_active() {
+    local active_pids
+
+    if [ "${CAT_FIX_OLD_PANEL_FORCE:-0}" = "1" ]; then
+        return
+    fi
+
+    active_pids="$(active_bot_processes)"
+    if [ -z "$active_pids" ]; then
+        return
+    fi
+
+    echo "Botpanel, Steam, or TF2 appears to be running." >&2
+    echo "Stop the panel with ./botpanel/stop before repairing old paths." >&2
+    echo "Active pids: $active_pids" >&2
+    echo "Set CAT_FIX_OLD_PANEL_FORCE=1 only if you intentionally want to repair live paths." >&2
+    return 1
+}
+
+write_steamapps_detect_log() {
+    local user_home="$1"
+    shift
+
+    {
+        echo "Failed to automatically find Steam steamapps with Team Fortress 2."
+        echo "user=$(main_user_name)"
+        echo "user_home=$user_home"
+        echo "HOME=$HOME"
+        echo "CAT_STEAM_ROOT=${CAT_STEAM_ROOT:-}"
+        echo "CAT_STEAMAPPS_PATH=${CAT_STEAMAPPS_PATH:-}"
+        echo
+        echo "Checked paths:"
+        for candidate in "$@"; do
+            if tf2_install_ready_from_steamapps "$candidate"; then
+                echo "  tf2:     $candidate"
+            elif [ -d "$candidate/common/Team Fortress 2" ]; then
+                echo "  partial: $candidate (Team Fortress 2 exists, tf_linux64 missing)"
+            elif [ -d "$candidate" ]; then
+                echo "  no-tf2:  $candidate"
+            else
+                echo "  missing: $candidate"
+            fi
+        done
+    } >"$steamapps_detect_log" 2>/dev/null || true
+}
+
+find_host_steamapps() {
+    local user_home
+    local candidate
+    local -a candidates=()
+
+    user_home="$(user_home_path)"
+    if [ -n "${CAT_STEAMAPPS_PATH:-}" ]; then
+        candidates+=("$CAT_STEAMAPPS_PATH")
+    fi
+
+    if [ -n "${CAT_STEAM_ROOT:-}" ]; then
+        candidates+=("$CAT_STEAM_ROOT/steamapps")
+    fi
+
+    candidates+=(
+        "$user_home/.steam/steam/steamapps" \
+        "$user_home/.local/share/Steam/steamapps" \
+        "$user_home/.steam/debian-installation/steamapps" \
+        "$HOME/.steam/steam/steamapps" \
+        "$HOME/.local/share/Steam/steamapps" \
+        "$HOME/.steam/debian-installation/steamapps" \
+        "$shared_steamapps"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if tf2_install_ready_from_steamapps "$candidate"; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+
+    write_steamapps_detect_log "$user_home" "${candidates[@]}"
+    return 1
+}
+
+copy_navmeshes_to() {
+    local source_dir="$1"
+    local target_dir="$2"
+    local label="$3"
+    local copied_count=0
+    local nav_file
+    local target_file
+    local -a nav_files=()
+
+    if [ ! -d "$source_dir" ]; then
+        return
+    fi
+
+    shopt -s nullglob
+    nav_files=("$source_dir"/*.nav)
+    shopt -u nullglob
+
+    if [ "${#nav_files[@]}" -eq 0 ]; then
+        return
+    fi
+
+    run_as_root mkdir -p "$target_dir"
+    for nav_file in "${nav_files[@]}"; do
+        target_file="$target_dir/$(basename "$nav_file")"
+        if [ -e "$target_file" ] && same_resolved_path "$nav_file" "$target_file"; then
+            continue
+        fi
+        if [ -e "$target_file" ] && cmp -s "$nav_file" "$target_file"; then
+            continue
+        fi
+
+        run_as_root install -m 755 "$nav_file" "$target_file"
+        copied_count=$((copied_count + 1))
+    done
+
+    if [ "$copied_count" -gt 0 ]; then
+        log "copied $copied_count navmeshes from $label to $target_dir"
+    fi
+}
+
+preserve_navmeshes_from() {
+    local source_dir="$1"
+    local label="$2"
+
+    copy_navmeshes_to "$source_dir" "$install_root/navmeshes" "$label"
+}
+
+preserve_legacy_navmeshes() {
+    local user_home
+    local bot_home
+    local candidate
+    local -a candidates=()
+
+    user_home="$(user_home_path)"
+    candidates+=(
+        "$database_root/nav meshes" \
+        "$shared_steamapps/common/Team Fortress 2/tf/maps" \
+        "$user_home/.steam/steam/steamapps/common/Team Fortress 2/tf/maps" \
+        "$user_home/.local/share/Steam/steamapps/common/Team Fortress 2/tf/maps" \
+        "$user_home/.steam/debian-installation/steamapps/common/Team Fortress 2/tf/maps" \
+        "$HOME/.steam/steam/steamapps/common/Team Fortress 2/tf/maps" \
+        "$HOME/.local/share/Steam/steamapps/common/Team Fortress 2/tf/maps" \
+        "$HOME/.steam/debian-installation/steamapps/common/Team Fortress 2/tf/maps"
+    )
+
+    if [ -d "$user_instances_dir" ]; then
+        for bot_home in "$user_instances_dir"/*; do
+            [ -d "$bot_home" ] || continue
+            candidates+=(
+                "$bot_home/.steam/steam/steamapps/common/Team Fortress 2/tf/maps" \
+                "$bot_home/.local/share/Steam/steamapps/common/Team Fortress 2/tf/maps" \
+                "$bot_home/.steam/debian-installation/steamapps/common/Team Fortress 2/tf/maps"
+            )
+        done
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        preserve_navmeshes_from "$candidate" "$candidate"
+    done
+}
+
+ensure_shared_steamapps() {
+    local host_steamapps="$1"
+    local host_real
+
+    if [ -z "$host_steamapps" ] || [ ! -d "$host_steamapps" ]; then
+        echo "Host steamapps path is unavailable; cannot prepare $shared_steamapps." >&2
+        return 1
+    fi
+
+    host_real="$(resolved_path "$host_steamapps")"
+    if [ "$host_real" = "$shared_steamapps" ]; then
+        if tf2_install_ready_from_steamapps "$shared_steamapps"; then
+            log "$shared_steamapps already exposes a runnable TF2 install"
+            return 0
+        fi
+
+        echo "$shared_steamapps resolved to itself but does not expose a runnable TF2 install." >&2
+        return 1
+    fi
+
+    if mountpoint -q "$shared_steamapps" 2>/dev/null; then
+        log "$shared_steamapps is a bind mount; unmounting it before creating the shared symlink"
+        run_as_root umount "$shared_steamapps"
+    fi
+
+    if [ -L "$shared_steamapps" ]; then
+        if [ "$(resolved_path "$shared_steamapps")" = "$host_real" ]; then
+            log "$shared_steamapps already points to $host_real"
+            return 0
+        fi
+        run_as_root rm -f "$shared_steamapps"
+    elif [ -e "$shared_steamapps" ]; then
+        log "removing stale generated shared directory before linking the existing install"
+        run_as_root rm -rf -- "$shared_steamapps"
+    fi
+
+    run_as_root mkdir -p "$(dirname "$shared_steamapps")"
+    run_as_root ln -s "$host_real" "$shared_steamapps"
+
+    if ! tf2_install_ready_from_steamapps "$shared_steamapps"; then
+        echo "Shared symlink was created, but TF2 is still not runnable through $shared_steamapps." >&2
+        return 1
+    fi
+
+    log "shared steamapps ready: $shared_steamapps -> $host_real (symlink)"
+}
+
+repair_bot_steamapps_link() {
+    local steamapps_path="$1"
+    local link_target
+    local target_uid
+    local target_gid
+
+    if [ ! -e "$steamapps_path" ] && [ ! -L "$steamapps_path" ]; then
+        return
+    fi
+
+    if [ -L "$steamapps_path" ]; then
+        link_target="$(readlink "$steamapps_path")"
+        if [ "$link_target" = "$shared_steamapps" ] || [ "$link_target" = "$shared_steamapps/" ]; then
+            return
+        fi
+
+        log "replacing bot steamapps symlink $steamapps_path ($link_target)"
+        run_as_root rm -f "$steamapps_path"
+    else
+        log "removing generated bot steamapps directory $steamapps_path before linking the shared library"
+        run_as_root rm -rf -- "$steamapps_path"
+    fi
+
+    run_as_root mkdir -p "$(dirname "$steamapps_path")"
+    run_as_root ln -s "$shared_steamapps" "$steamapps_path"
+    target_uid="$(main_user_id)"
+    target_gid="$(main_group_id)"
+    run_as_root chown -h "$target_uid:$target_gid" "$steamapps_path" 2>/dev/null || true
+}
+
+repair_bot_instances() {
+    local bot_home
+    local steam_root
+
+    if [ ! -d "$user_instances_dir" ]; then
+        return
+    fi
+
+    for bot_home in "$user_instances_dir"/*; do
+        [ -d "$bot_home" ] || continue
+        for steam_root in \
+            "$bot_home/.steam/steam" \
+            "$bot_home/.local/share/Steam" \
+            "$bot_home/.steam/debian-installation"; do
+            if [ -e "$steam_root" ] || [ -L "$steam_root" ] || [ -e "$steam_root/steamapps" ] || [ -L "$steam_root/steamapps" ]; then
+                repair_bot_steamapps_link "$steam_root/steamapps"
+            fi
+        done
+    done
+}
+
+sync_navmeshes_to_tf2() {
+    local target_maps="$shared_steamapps/common/Team Fortress 2/tf/maps"
+
+    copy_navmeshes_to "$install_root/navmeshes" "$target_maps" "$install_root/navmeshes"
+}
+
+print_summary() {
+    local cathook_navs=0
+    local tf2_navs=0
+
+    if [ -d "$install_root/navmeshes" ]; then
+        cathook_navs="$(find "$install_root/navmeshes" -maxdepth 1 -type f -name '*.nav' 2>/dev/null | wc -l)"
+    fi
+    if [ -d "$shared_steamapps/common/Team Fortress 2/tf/maps" ]; then
+        tf2_navs="$(find "$shared_steamapps/common/Team Fortress 2/tf/maps" -maxdepth 1 -type f -name '*.nav' 2>/dev/null | wc -l)"
+    fi
+
+    log "done: cathook_navmeshes=$cathook_navs tf2_map_navmeshes=$tf2_navs"
+}
+
+main() {
+    local host_steamapps
+
+    case "${1:-}" in
+        -h | --help)
+            usage
+            return 0
+            ;;
+        "")
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            return 1
+            ;;
+    esac
+
+    if [ "$(uname -s)" != "Linux" ]; then
+        echo "This repair script is only for Linux botpanel installs." >&2
+        return 1
+    fi
+
+    refuse_if_panel_is_active
+    preserve_legacy_navmeshes
+
+    if ! host_steamapps="$(find_host_steamapps)"; then
+        echo "Could not find a runnable host TF2 install." >&2
+        echo "Detection log: $steamapps_detect_log" >&2
+        cat "$steamapps_detect_log" >&2 2>/dev/null || true
+        return 1
+    fi
+
+    log "detected host steamapps: $host_steamapps"
+    ensure_shared_steamapps "$host_steamapps"
+    preserve_legacy_navmeshes
+    sync_navmeshes_to_tf2
+    repair_bot_instances
+    print_summary
+}
+
+main "$@"

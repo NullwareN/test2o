@@ -1,0 +1,536 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$script_dir"
+web_panel_root="$script_dir/catbot-ipc-web-panel-main"
+ipc_server_root="$script_dir/catbot-ipc-server-main"
+database_root="$script_dir/catbot-database"
+nullhook_url="${CAT_NULLHOOK_URL:-https://github.com/NullwareN/test}"
+install_root="${CATHOOK_ROOT:-/opt/cathook}"
+steamapps_detect_log="${CAT_STEAMAPPS_DETECT_LOG:-/tmp/cat-steamapps-detect.log}"
+shared_steamapps="/opt/steamapps"
+
+usage() {
+    cat <<'EOF'
+Usage: ./update [--dev|--no-update]
+
+Pulls this panel repo, updates/clones nullhook, builds textmode, installs
+libcathook into CATHOOK_ROOT, rebuilds the IPC server and web panel.
+
+  --dev / --no-update   Skip git pulls and navmesh updates; still build.
+
+Environment:
+  CATHOOK_SRC / NULLHOOK_SRC   Existing nullhook tree (otherwise ./nullhook)
+  CAT_NULLHOOK_URL             Clone URL (default NullwareN/test)
+  CATHOOK_ALLOW_DISCARD=1      Allow discarding local tracked changes
+  CATHOOK_ROOT=/opt/cathook
+  CAT_UPDATE_HOST_NAVMESHES=1
+EOF
+}
+
+is_enabled() {
+    case "${1:-}" in
+        "" | 0 | false | FALSE | no | NO | off | OFF) return 1 ;;
+    esac
+    return 0
+}
+
+is_dev_mode() {
+    is_enabled "${CATHOOK_DEV_MODE:-${CAT_DEV_MODE:-0}}"
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --dev | --no-update) export CATHOOK_DEV_MODE=1 ;;
+            -h | --help) usage; exit 0 ;;
+            *)
+                echo "Unknown update option: $1" >&2
+                usage >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        echo "sudo is required for system setup steps." >&2
+        exit 1
+    fi
+}
+
+git_as_owner() {
+    local tree="$1"
+    shift
+    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && command -v sudo >/dev/null 2>&1; then
+        sudo -H -u "#$SUDO_UID" git -C "$tree" "$@"
+    else
+        git -C "$tree" "$@"
+    fi
+}
+
+allow_discard_enabled() {
+    case "${CATHOOK_ALLOW_DISCARD:-${CAT_ALLOW_DISCARD:-0}}" in
+        1|true|TRUE|yes|YES|on|ON|force|FORCE) return 0 ;;
+    esac
+    return 1
+}
+
+discard_tracked_changes() {
+    local tree="$1"
+    if [ -z "$(git_as_owner "$tree" status --porcelain --untracked-files=no)" ]; then
+        return 0
+    fi
+    if allow_discard_enabled; then
+        echo "Discarding local tracked changes in $tree (CATHOOK_ALLOW_DISCARD is set)..."
+        git_as_owner "$tree" reset --hard
+        return 0
+    fi
+    echo "Local tracked changes in $tree; skipping git pull." >&2
+    echo "Commit, stash, or set CATHOOK_ALLOW_DISCARD=1 to allow discarding." >&2
+    return 1
+}
+
+pull_git_tree() {
+    local tree="$1"
+    if ! git_as_owner "$tree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Warning: $tree is not a git checkout, skipping pull."
+        return 0
+    fi
+    discard_tracked_changes "$tree" || return 0
+    git_as_owner "$tree" pull --ff-only
+    git_as_owner "$tree" submodule update --init --recursive || true
+}
+
+user_home_path() {
+    local user_name="${SUDO_USER:-$USER}"
+    if command -v getent >/dev/null 2>&1; then
+        getent passwd "$user_name" | awk -F: '{ print $6; exit }'
+        return
+    fi
+    printf '%s\n' "$HOME"
+}
+
+write_steamapps_detect_log() {
+    local user_home="$1"
+    shift
+    {
+        echo "Failed to automatically find Steam steamapps with Team Fortress 2."
+        echo "user=${SUDO_USER:-$USER}"
+        echo "user_home=$user_home"
+        echo "HOME=$HOME"
+        echo "CAT_STEAM_ROOT=${CAT_STEAM_ROOT:-}"
+        echo "CAT_STEAMAPPS_PATH=${CAT_STEAMAPPS_PATH:-}"
+        echo
+        echo "Checked paths:"
+        for candidate in "$@"; do
+            if tf2_install_ready_from_steamapps "$candidate"; then
+                echo "  tf2:     $candidate"
+            elif [ -d "$candidate/common/Team Fortress 2" ]; then
+                echo "  partial: $candidate (Team Fortress 2 exists, tf_linux64 missing)"
+            elif [ -d "$candidate" ]; then
+                echo "  no-tf2:  $candidate"
+            else
+                echo "  missing: $candidate"
+            fi
+        done
+    } >"$steamapps_detect_log" 2>/dev/null || true
+}
+
+find_host_steamapps() {
+    local user_home candidate
+    local -a candidates=()
+    user_home="$(user_home_path)"
+    [ -n "${CAT_STEAMAPPS_PATH:-}" ] && candidates+=("$CAT_STEAMAPPS_PATH")
+    [ -n "${CAT_STEAM_ROOT:-}" ] && candidates+=("$CAT_STEAM_ROOT/steamapps")
+    candidates+=(
+        "$user_home/.steam/steam/steamapps"
+        "$user_home/.local/share/Steam/steamapps"
+        "$user_home/.steam/debian-installation/steamapps"
+        "$HOME/.steam/steam/steamapps"
+        "$HOME/.local/share/Steam/steamapps"
+        "$HOME/.steam/debian-installation/steamapps"
+    )
+    for candidate in "${candidates[@]}"; do
+        if tf2_install_ready_from_steamapps "$candidate"; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+    write_steamapps_detect_log "$user_home" "${candidates[@]}"
+    return 1
+}
+
+tf2_install_ready_from_steamapps() {
+    [ -x "$1/common/Team Fortress 2/tf_linux64" ]
+}
+
+ensure_shared_steamapps() {
+    local host_steamapps="$1"
+    local host_real
+    if [ -z "$host_steamapps" ] || [ ! -d "$host_steamapps" ]; then
+        echo "Host steamapps path is unavailable; cannot prepare $shared_steamapps." >&2
+        return 1
+    fi
+    host_real="$(readlink -f "$host_steamapps" 2>/dev/null || printf '%s\n' "$host_steamapps")"
+    [ "$host_real" = "$shared_steamapps" ] && return 0
+    if mountpoint -q "$shared_steamapps" 2>/dev/null; then
+        echo "$shared_steamapps is a bind mount; unmounting it before creating the shared symlink."
+        run_as_root umount "$shared_steamapps"
+    fi
+    if [ -L "$shared_steamapps" ]; then
+        [ "$(readlink -f "$shared_steamapps" 2>/dev/null || true)" = "$host_real" ] && return 0
+        run_as_root rm -f "$shared_steamapps"
+    elif [ -e "$shared_steamapps" ]; then
+        echo "$shared_steamapps is a stale generated directory; removing it before linking the existing install."
+        run_as_root rm -rf -- "$shared_steamapps"
+    fi
+    run_as_root mkdir -p "$(dirname "$shared_steamapps")"
+    run_as_root ln -s "$host_real" "$shared_steamapps"
+    [ "$(readlink -f "$shared_steamapps" 2>/dev/null || true)" = "$host_real" ]
+}
+
+update_panel_repo() {
+    local old_script="" new_script=""
+    if is_dev_mode; then
+        echo "Dev mode; skipping panel git pull."
+        return
+    fi
+    if ! git_as_owner "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Warning: $repo_root is not a git checkout, skipping panel pull."
+        return
+    fi
+    old_script="$(git_as_owner "$repo_root" rev-parse HEAD:update 2>/dev/null || true)"
+    pull_git_tree "$repo_root"
+    new_script="$(git_as_owner "$repo_root" rev-parse HEAD:update 2>/dev/null || true)"
+    if [ -n "$old_script" ] && [ -n "$new_script" ] && [ "$old_script" != "$new_script" ]; then
+        echo "Update script changed during pull; restarting."
+        exec "$0" "$@"
+    fi
+}
+
+nullhook_tree_ok() {
+    [ -n "${1:-}" ] && [ -f "$1/CMakeLists.txt" ]
+}
+
+find_nullhook_src() {
+    local candidate=""
+    for candidate in \
+        "${NULLHOOK_SRC:-}" \
+        "${CATHOOK_SRC:-}" \
+        "$script_dir/nullhook" \
+        "$script_dir/../nullhook" \
+        "$script_dir/../ogcathook-rewrite" \
+        /home/sex/ogcathook-rewrite \
+        /run/media/sex/Nowy/coding/github/ogcathook-rewrite
+    do
+        if nullhook_tree_ok "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_nullhook_src() {
+    local src=""
+    if src="$(find_nullhook_src)"; then
+        if [ "$src" != "$script_dir/nullhook" ] && [ ! -e "$script_dir/nullhook" ]; then
+            ln -s "$src" "$script_dir/nullhook"
+            echo "Linked $script_dir/nullhook -> $src"
+        fi
+        printf '%s\n' "$src"
+        return 0
+    fi
+    echo "Cloning nullhook into $script_dir/nullhook"
+    git clone --recurse-submodules "$nullhook_url" "$script_dir/nullhook"
+    printf '%s\n' "$script_dir/nullhook"
+}
+
+update_nullhook_src() {
+    local src="$1"
+    if is_dev_mode; then
+        echo "Dev mode; skipping nullhook git pull ($src)."
+        return
+    fi
+    echo "Updating nullhook at $src"
+    pull_git_tree "$src"
+}
+
+build_and_install_nullhook() {
+    local src="$1"
+    local jobs build_dir so
+    jobs="$(nproc 2>/dev/null || echo 4)"
+    build_dir="$src/build"
+
+    echo "Building nullhook textmode ($src)..."
+    if [ ! -f "$build_dir/CMakeCache.txt" ] || ! grep -q '^Visuals_DrawType:STRING=Textmode$' "$build_dir/CMakeCache.txt" 2>/dev/null; then
+        cmake -S "$src" -B "$build_dir" -DVisuals_DrawType=Textmode -DEnableIPC=1
+    fi
+    cmake --build "$build_dir" -j"$jobs"
+
+    so=""
+    for candidate in "$build_dir/bin/libcathook.so" "$src/bin/libcathook.so" "$src/bin/libcathooktextmode.so"; do
+        if [ -f "$candidate" ]; then
+            so="$candidate"
+            break
+        fi
+    done
+    if [ -z "$so" ]; then
+        echo "nullhook build produced no libcathook.so" >&2
+        exit 1
+    fi
+
+    echo "Installing $so -> $install_root/bin"
+    run_as_root mkdir -p "$install_root/bin"
+    run_as_root install -m 0755 "$so" "$install_root/bin/libcathook.so"
+    run_as_root install -m 0755 "$so" "$install_root/bin/libcathooktextmode.so"
+    run_as_root install -m 0755 "$so" "$install_root/bin/libcathook-textmode.so"
+}
+
+build_ipc_server() {
+    echo "Building nullhook IPC server..."
+    make -C "$ipc_server_root"
+}
+
+install_build_dependencies() {
+    local missing=()
+    for cmd in git cmake make g++ npm rsync wget tar python3 pkg-config; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if ! command -v node >/dev/null 2>&1 && ! command -v nodejs >/dev/null 2>&1; then
+        missing+=("nodejs")
+    fi
+    [ "${#missing[@]}" -eq 0 ] && return 0
+    echo "Missing: ${missing[*]}"
+    if command -v apt-get >/dev/null 2>&1; then
+        run_as_root apt-get update
+        run_as_root apt-get install -y git cmake make g++ npm nodejs rsync wget tar python3 pkg-config
+        return 0
+    fi
+    if command -v pacman >/dev/null 2>&1; then
+        run_as_root pacman -Sy --needed --noconfirm \
+            base-devel cmake git nodejs npm rsync wget tar python pkgconf
+        return 0
+    fi
+    if command -v dnf >/dev/null 2>&1; then
+        run_as_root dnf -y install \
+            gcc-c++ make cmake git nodejs npm rsync wget tar python3 pkgconf-pkg-config
+        return 0
+    fi
+    if command -v yum >/dev/null 2>&1; then
+        run_as_root yum -y install \
+            gcc-c++ make cmake git nodejs npm rsync wget tar python3 pkgconf-pkg-config
+        return 0
+    fi
+    if command -v zypper >/dev/null 2>&1; then
+        run_as_root zypper --non-interactive install \
+            gcc-c++ make cmake git nodejs npm rsync wget tar python3 pkg-config
+        return 0
+    fi
+    echo "Install git cmake make g++ npm rsync, then rerun ./update." >&2
+    exit 1
+}
+
+cathook_deps_present() {
+    command -v pkg-config >/dev/null 2>&1 || return 1
+    pkg-config --exists sdl2 xcb || return 1
+    pkg-config --exists freetype2 || ldconfig -p 2>/dev/null | grep -q 'libfreetype\.so\.6' || return 1
+    echo '#include <GL/gl.h>' | g++ -fsyntax-only -x c++ - >/dev/null 2>&1 || return 1
+    echo '#include <boost/version.hpp>' | g++ -fsyntax-only -x c++ - >/dev/null 2>&1 || return 1
+    return 0
+}
+
+install_cathook_dependencies() {
+    local src="$1"
+    if [ -x "$src/install-deps" ]; then
+        "$src/install-deps"
+        return
+    fi
+    if cathook_deps_present; then
+        return 0
+    fi
+    echo "Installing cathook library dependencies..."
+    if command -v apt-get >/dev/null 2>&1; then
+        run_as_root apt-get install -y \
+            pkg-config libsdl2-dev libboost-dev libxcb1-dev libgl1-mesa-dev libfreetype-dev || {
+            run_as_root apt-get update
+            run_as_root apt-get install -y \
+                pkg-config libsdl2-dev libboost-dev libxcb1-dev libgl1-mesa-dev libfreetype6-dev
+        }
+        return 0
+    fi
+    if command -v pacman >/dev/null 2>&1; then
+        run_as_root pacman -Sy --needed --noconfirm \
+            pkgconf sdl2 boost libxcb libglvnd freetype2
+        return 0
+    fi
+    if command -v dnf >/dev/null 2>&1; then
+        run_as_root dnf -y install \
+            pkgconf-pkg-config SDL2-devel boost-devel libxcb-devel mesa-libGL-devel freetype-devel
+        return 0
+    fi
+    if command -v yum >/dev/null 2>&1; then
+        run_as_root yum -y install \
+            pkgconf-pkg-config SDL2-devel boost-devel libxcb-devel mesa-libGL-devel freetype-devel
+        return 0
+    fi
+    if command -v zypper >/dev/null 2>&1; then
+        run_as_root zypper --non-interactive install \
+            pkg-config libSDL2-devel boost-devel libxcb-devel Mesa-libGL-devel freetype2-devel
+        return 0
+    fi
+    echo "Install SDL2, boost, libxcb, OpenGL and freetype dev packages, then rerun ./update." >&2
+    exit 1
+}
+
+build_web_panel() {
+    mkdir -p "$web_panel_root/logs" "$web_panel_root/public"
+    touch "$web_panel_root/logs/main.log"
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "npm is missing." >&2
+        exit 1
+    fi
+    ( cd "$web_panel_root" && npm install )
+    if [ ! -x "$web_panel_root/node_modules/.bin/browserify" ]; then
+        echo "browserify is missing after npm install." >&2
+        exit 1
+    fi
+    ( cd "$web_panel_root" && ./node_modules/.bin/browserify script.js -o public/bundle.js )
+}
+
+prepare_botpanel_state() {
+    mkdir -p "$script_dir/user_instances"
+    if [ ! -f "$script_dir/accounts.txt" ]; then
+        : > "$script_dir/accounts.txt"
+        chmod 600 "$script_dir/accounts.txt" 2>/dev/null || true
+        echo "Created $script_dir/accounts.txt"
+    fi
+}
+
+prepare_firejail() {
+    local config_path="/etc/firejail/firejail.config"
+    [ -f "$config_path" ] || return
+    run_as_root cp -n "$config_path" "$config_path.CATHOOK.bak" 2>/dev/null || true
+    run_as_root sed -i -E 's/^[[:space:]]*restricted-network[[:space:]]+yes/# restricted-network yes/' "$config_path"
+}
+
+fetch_navmesh_database() {
+    echo "Fetching navmeshes..."
+    if [ -d "$database_root/.git" ]; then
+        git -C "$database_root" fetch --depth 1
+        if [ -n "$(git -C "$database_root" status --porcelain --untracked-files=no)" ] && ! allow_discard_enabled; then
+            echo "$database_root has local changes; refusing to reset. Set CATHOOK_ALLOW_DISCARD=1 to allow." >&2
+            return 1
+        fi
+        if git -C "$database_root" merge-base --is-ancestor HEAD origin/master 2>/dev/null; then
+            git -C "$database_root" reset --hard origin/master
+        elif [ "$(git -C "$database_root" rev-parse HEAD)" = "$(git -C "$database_root" rev-parse origin/master)" ]; then
+            :
+        elif allow_discard_enabled; then
+            git -C "$database_root" reset --hard origin/master
+        else
+            echo "$database_root has local commits ahead of origin/master; refusing to reset. Set CATHOOK_ALLOW_DISCARD=1 to allow." >&2
+            return 1
+        fi
+    elif [ -d "$database_root" ]; then
+        echo "$database_root exists but is not a git checkout; skipping navmesh update." >&2
+        return 1
+    else
+        git clone --depth 1 https://github.com/GatoPotato658/catbot-database "$database_root"
+    fi
+}
+
+copy_navmeshes_to() {
+    local target_dir="$1"
+    local label="$2"
+    echo "Copying navmeshes into $target_dir ($label)..."
+    run_as_root mkdir -p "$target_dir"
+    run_as_root rsync "$database_root/nav meshes/"*.nav "$target_dir/"
+    run_as_root find "$target_dir" -maxdepth 1 -type f -name '*.nav' -exec chmod 755 {} +
+}
+
+update_navmeshes() {
+    local cathook_navmeshes="$install_root/navmeshes"
+    local host_steamapps host_tf2_maps
+    local shared_tf2_maps="$shared_steamapps/common/Team Fortress 2/tf/maps"
+    local tf2_maps="$shared_tf2_maps"
+
+    if is_dev_mode; then
+        echo "Dev mode; skipping navmesh update."
+        return
+    fi
+
+    fetch_navmesh_database || return
+    copy_navmeshes_to "$cathook_navmeshes" "navbot search path"
+
+    if ! host_steamapps="$(find_host_steamapps)"; then
+        echo "Could not find host Steam steamapps; navmeshes copied to $cathook_navmeshes only." >&2
+        return
+    fi
+
+    host_tf2_maps="$host_steamapps/common/Team Fortress 2/tf/maps"
+    if [ ! -d "$host_tf2_maps" ]; then
+        echo "TF2 maps directory not found at $host_tf2_maps; navmeshes were copied to $cathook_navmeshes only."
+        return
+    fi
+
+    ensure_shared_steamapps "$host_steamapps" || return
+
+    if is_enabled "${CAT_UPDATE_HOST_NAVMESHES:-0}"; then
+        tf2_maps="$host_tf2_maps"
+        echo "CAT_UPDATE_HOST_NAVMESHES is enabled; navmeshes will also be copied to the host TF2 install."
+    fi
+
+    copy_navmeshes_to "$tf2_maps" "TF2 maps directory"
+}
+
+fix_runtime_permissions_once() {
+    local permissions_script="$script_dir/fix_permissions"
+    if [ -x "$permissions_script" ]; then
+        "$permissions_script" --once
+    fi
+}
+
+parse_args "$@"
+
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "./update must run on Linux." >&2
+    exit 1
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Run this script as your normal Linux user, not root." >&2
+    exit 1
+fi
+
+if [ ! -d "$web_panel_root" ] || [ ! -d "$ipc_server_root" ]; then
+    echo "Missing bundled panel directories. Expected:" >&2
+    echo "  $web_panel_root" >&2
+    echo "  $ipc_server_root" >&2
+    exit 1
+fi
+
+update_panel_repo "$@"
+install_build_dependencies
+nullhook_src="$(ensure_nullhook_src)"
+update_nullhook_src "$nullhook_src"
+install_cathook_dependencies "$nullhook_src"
+build_and_install_nullhook "$nullhook_src"
+build_ipc_server
+build_web_panel
+prepare_botpanel_state
+prepare_firejail
+update_navmeshes
+fix_runtime_permissions_once
+
+echo
+echo "Done. nullhook: $nullhook_src"
+echo "Start the panel with ./start"

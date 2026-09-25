@@ -1,0 +1,614 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
+web_panel_root="$script_dir/catbot-ipc-web-panel-main"
+textmode_root="$script_dir/cat-steamtxtmode"
+install_root="${CATHOOK_ROOT:-/opt/cathook}"
+shared_steam_root="${CAT_SHARED_STEAM_ROOT:-/opt/catbot-shared-steam}"
+target_version="${CAT_STEAM_TARGET_VERSION:-1689034492}"
+target_steamui_build="${CAT_STEAMUI_BUILD_ID:-aac6c9f07c9755b26c100165b3e7d5f84904acc0}"
+archive_url="${CAT_STEAM_ARCHIVE_URL:-http://web.archive.org/web/20230711164652if_/media.steampowered.com/client}"
+
+yes_mode=0
+check_only=0
+network_ok=0
+steam_root=""
+tf2_steamapps=""
+missing_commands=""
+active_runtime=0
+
+declare -a failure_keys=()
+declare -a failure_labels=()
+declare -a manual_notes=()
+declare -A failure_fixable=()
+
+usage() {
+    cat <<'EOF'
+Usage: ./botpanel/fix-all [--yes|--check-only]
+
+The default mode runs diagnostics and asks:
+  1) yes, fix everything fixable
+  2) no, I will do it manually
+
+Options:
+  -y, --yes        repair without prompting
+  --check-only    diagnose only; never repair
+  -h, --help      show this help
+
+Internet failures are reported but are never “fixed” by this script. Steam
+downgrades and dependency installs may stop/reconfigure Steam, so they are
+deferred while the botpanel is live.
+
+Environment:
+  CATHOOK_ROOT=/opt/cathook
+  CAT_STEAM_ROOT=/path/to/steam
+  CAT_STEAM_TARGET_VERSION=1689034492
+  CAT_STEAMUI_BUILD_ID=<pinned steamui Build ID>
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -y|--yes)
+            yes_mode=1
+            ;;
+        --check-only)
+            check_only=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+log() {
+    printf '[fix-all] %s\n' "$*"
+}
+
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        log "sudo is required for this repair: $*"
+        return 1
+    fi
+}
+
+user_home_path() {
+    local user_name="${SUDO_USER:-${USER:-}}"
+    if command -v getent >/dev/null 2>&1 && [ -n "$user_name" ]; then
+        getent passwd "$user_name" | awk -F: '{print $6; exit}'
+        return
+    fi
+    printf '%s\n' "${HOME:-}"
+}
+
+resolved_path() {
+    readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+add_failure() {
+    local key="$1"
+    local label="$2"
+    local can_fix="${3:-0}"
+    failure_keys+=("$key")
+    failure_labels+=("$label")
+    failure_fixable["$key"]="$can_fix"
+}
+
+check_item() {
+    local key="$1"
+    local label="$2"
+    local function_name="$3"
+    local can_fix="${4:-0}"
+    if "$function_name"; then
+        printf '  [ OK ] %s\n' "$label"
+    else
+        printf '  [FAIL] %s\n' "$label"
+        add_failure "$key" "$label" "$can_fix"
+    fi
+}
+
+collect_steam_candidates() {
+    local user_home
+    user_home="$(user_home_path)"
+    local -a candidates=(
+        "${CAT_STEAM_ROOT:-}"
+        "$shared_steam_root"
+        "${user_home:-}/.steam/debian-installation"
+        "${user_home:-}/.steam/steam"
+        "${user_home:-}/.steam/root"
+        "${user_home:-}/.local/share/Steam"
+        "${HOME:-}/.steam/debian-installation"
+        "${HOME:-}/.steam/steam"
+        "${HOME:-}/.local/share/Steam"
+    )
+    local candidate real
+    local -A seen=()
+    for candidate in "${candidates[@]}"; do
+        [ -n "$candidate" ] || continue
+        [ -d "$candidate" ] || continue
+        real="$(resolved_path "$candidate")"
+        [ -n "${seen[$real]:-}" ] && continue
+        seen["$real"]=1
+        printf '%s\n' "$real"
+    done
+}
+
+find_steam_root() {
+    local candidate
+    while IFS= read -r candidate; do
+        if [ -x "$candidate/steam.sh" ] || [ -x "$candidate/ubuntu12_32/steam" ] || [ -x "$candidate/ubuntu12_32/steamui.so" ]; then
+            steam_root="$candidate"
+            return 0
+        fi
+    done < <(collect_steam_candidates)
+    return 1
+}
+
+steamui_path() {
+    local candidate
+    for candidate in \
+        "$steam_root/ubuntu12_32/steamui.so" \
+        "$shared_steam_root/ubuntu12_32/steamui.so"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+steam_package_version() {
+    local package_file
+    [ -d "$steam_root/package" ] || return 0
+    while IFS= read -r -d '' package_file; do
+        grep -m1 -oE '"version"[[:space:]]*:[[:space:]]*"[0-9]+"' "$package_file" 2>/dev/null \
+            | grep -oE '[0-9]+' | head -1 && return 0
+    done < <(find "$steam_root/package" -maxdepth 1 -type f -name 'steam_client_ubuntu12*' -print0 2>/dev/null)
+    return 0
+}
+
+steamui_build_id() {
+    local image
+    image="$(steamui_path 2>/dev/null || true)"
+    [ -n "$image" ] || return 0
+    if command -v readelf >/dev/null 2>&1; then
+        readelf -n "$image" 2>/dev/null | awk '/Build ID:/ {print $3; exit}'
+    fi
+}
+
+check_linux() {
+    [ "$(uname -s 2>/dev/null || true)" = Linux ]
+}
+
+check_internet() {
+    local dns_ok=0 endpoint_ok=0
+    if command -v getent >/dev/null 2>&1 && getent hosts github.com >/dev/null 2>&1; then
+        dns_ok=1
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        if curl --connect-timeout 4 --max-time 10 -fsSLI https://github.com >/dev/null 2>&1 \
+            && curl --connect-timeout 4 --max-time 10 -fsSLI https://store.steampowered.com >/dev/null 2>&1; then
+            endpoint_ok=1
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q --spider --timeout=10 https://github.com \
+            && wget -q --spider --timeout=10 https://store.steampowered.com; then
+            endpoint_ok=1
+        fi
+    fi
+    if [ "$dns_ok" -eq 1 ] && [ "$endpoint_ok" -eq 1 ]; then
+        network_ok=1
+        return 0
+    fi
+    network_ok=0
+    return 1
+}
+
+check_commands() {
+    local -a required=(bash git make g++ readelf file nm npm firejail ip iptables)
+    local command_name
+    missing_commands=""
+    for command_name in "${required[@]}"; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+            missing_commands+=" $command_name"
+        fi
+    done
+    if ! command -v node >/dev/null 2>&1 && ! command -v nodejs >/dev/null 2>&1; then
+        missing_commands+=" nodejs"
+    fi
+    if ! command -v dbus-run-session >/dev/null 2>&1 && ! command -v dbus-launch >/dev/null 2>&1; then
+        missing_commands+=" dbus-x11"
+    fi
+    if ! command -v Xvfb >/dev/null 2>&1 && ! command -v xpra >/dev/null 2>&1; then
+        missing_commands+=" xpra-or-Xvfb"
+    fi
+    if [ -n "$missing_commands" ]; then
+        log "missing commands:$missing_commands"
+        return 1
+    fi
+    return 0
+}
+
+check_32bit_toolchain() {
+    command -v g++ >/dev/null 2>&1 || return 1
+    local crt="$(g++ -m32 -print-file-name=crtbeginS.o 2>/dev/null || true)"
+    local libstdcxx="$(g++ -m32 -print-file-name=libstdc++.so 2>/dev/null || true)"
+    [ -f "$crt" ] && [ -f "$libstdcxx" ]
+}
+
+check_steam_install() {
+    find_steam_root
+}
+
+check_steam_downgrade() {
+    [ -n "$steam_root" ] || return 1
+    local version build
+    version="$(steam_package_version)"
+    build="$(steamui_build_id)"
+    if [ -n "$version" ] && [ "$version" != "$target_version" ]; then
+        log "Steam package version is ${version}, expected ${target_version}."
+        return 1
+    fi
+    if [ -n "$build" ] && [ "$build" != "$target_steamui_build" ]; then
+        log "steamui Build ID is ${build}, expected ${target_steamui_build}."
+        return 1
+    fi
+    [ -n "$version" ] || [ -n "$build" ] || return 1
+    return 0
+}
+
+check_steam_shell_patch() {
+    local candidate
+    for candidate in "$shared_steam_root/steam.sh" "$steam_root/steam.sh"; do
+        if [ -f "$candidate" ] && grep -Fq 'CAT_STEAM_TXTMODE_PRELOAD' "$candidate"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+check_webhelper_wrapper() {
+    local wrapper="$shared_steam_root/ubuntu12_64/steamwebhelper.sh"
+    [ -f "$wrapper" ] || return 1
+    grep -Fq 'libx64/libcatsteamtxtmode.so' "$wrapper" || return 1
+    bash -n "$wrapper" >/dev/null 2>&1
+}
+
+check_node_dependencies() {
+    [ -x "$web_panel_root/node_modules/.bin/browserify" ] || return 1
+    [ -d "$web_panel_root/node_modules/express" ] || return 1
+    [ -f "$web_panel_root/public/bundle.js" ] || return 1
+}
+
+find_tf2_steamapps() {
+    local user_home candidate
+    user_home="$(user_home_path)"
+    local -a candidates=(
+        "${CAT_STEAMAPPS_PATH:-}"
+        "${CAT_STEAM_ROOT:+$CAT_STEAM_ROOT/steamapps}"
+        "$shared_steam_root/steamapps"
+        "$steam_root/steamapps"
+        "${user_home:-}/.steam/steam/steamapps"
+        "${user_home:-}/.local/share/Steam/steamapps"
+        "${user_home:-}/.steam/debian-installation/steamapps"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [ -x "$candidate/common/Team Fortress 2/tf_linux64" ]; then
+            tf2_steamapps="$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+check_tf2() {
+    find_tf2_steamapps
+}
+
+check_accounts() {
+    [ -f "$script_dir/accounts.txt" ] || return 1
+    grep -Eq '^[^#:[:space:]][^:]*:.+' "$script_dir/accounts.txt"
+}
+
+elf_matches() {
+    local image="$1" expected="$2"
+    [ -f "$image" ] || return 1
+    file -b "$image" 2>/dev/null | grep -Fq "$expected"
+}
+
+check_textmode_source() {
+    elf_matches "$textmode_root/bin/lib64/libcatsteamtxtmode.so" 'ELF 32-bit' || return 1
+    elf_matches "$textmode_root/bin/libx64/libcatsteamtxtmode.so" 'ELF 64-bit' || return 1
+}
+
+check_textmode_deployed() {
+    elf_matches "$install_root/botpanel/cat-steamtxtmode/bin/lib64/libcatsteamtxtmode.so" 'ELF 32-bit' || return 1
+    elf_matches "$install_root/botpanel/cat-steamtxtmode/bin/libx64/libcatsteamtxtmode.so" 'ELF 64-bit' || return 1
+}
+
+check_pup_runtime() {
+    [ -x "$install_root/bin/libcathooktextmode.so" ] || return 1
+    [ -x "$install_root/ipc/bin/server" ] || return 1
+    if command -v ldd >/dev/null 2>&1; then
+        if ldd "$install_root/bin/libcathooktextmode.so" 2>&1 | grep -Fq 'not found'; then
+            log "unresolved shared dependency in $install_root/bin/libcathooktextmode.so"
+            return 1
+        fi
+        if ldd "$install_root/ipc/bin/server" 2>&1 | grep -Fq 'not found'; then
+            log "unresolved shared dependency in $install_root/ipc/bin/server"
+            return 1
+        fi
+    fi
+}
+
+check_textmode_dependencies() {
+    local image
+    for image in \
+        "$textmode_root/bin/lib64/libcatsteamtxtmode.so" \
+        "$textmode_root/bin/libx64/libcatsteamtxtmode.so"; do
+        [ -f "$image" ] || return 1
+        if command -v ldd >/dev/null 2>&1 && ldd "$image" 2>&1 | grep -Fq 'not found'; then
+            log "unresolved shared dependency in $image"
+            return 1
+        fi
+    done
+    return 0
+}
+
+check_permissions() {
+    local path
+    for path in "$script_dir/fix-all" "$script_dir/start" "$script_dir/stop" "$script_dir/update" \
+        "$script_dir/install-catbots" "$script_dir/install-instances" "$script_dir/fix-oldshi"; do
+        [ -x "$path" ] || return 1
+    done
+    return 0
+}
+
+check_active_runtime() {
+    if pgrep -u "$(id -u)" -f 'catbot-ipc-web-panel-main|firejail .*--name=b[0-9]+|tf_linux64' >/dev/null 2>&1; then
+        active_runtime=1
+    else
+        active_runtime=0
+    fi
+    return 0
+}
+
+run_checks() {
+    failure_keys=()
+    failure_labels=()
+    printf '\nDiagnostics\n'
+    check_item platform 'Linux host' check_linux 0
+    check_item internet 'DNS and HTTPS connectivity' check_internet 0
+    check_item commands 'Required runtime/build commands' check_commands 1
+    check_item multilib '32-bit C++ toolchain for pinned SteamUI' check_32bit_toolchain 1
+    check_item steam_install 'Steam installation found' check_steam_install 0
+    check_item steam_version 'Pinned Steam/VGUI build' check_steam_downgrade 1
+    check_item steam_shell 'Steam launcher preload boundary' check_steam_shell_patch 1
+    check_item webhelper_wrapper '64-bit steamwebhelper preload wrapper' check_webhelper_wrapper 1
+    check_item node_dependencies 'Web-panel Node dependencies/bundle' check_node_dependencies 1
+    check_item tf2 'Runnable Team Fortress 2 install' check_tf2 0
+    check_item accounts 'Bot accounts file with account lines' check_accounts 0
+    check_item textmode_source 'Paired local Steam text-mode libraries' check_textmode_source 1
+    check_item textmode_deployed 'Paired installed Steam text-mode libraries' check_textmode_deployed 1
+    check_item textmode_deps 'Steam text-mode shared dependencies' check_textmode_dependencies 1
+    check_item pup_runtime 'Installed Pup textmode runtime and IPC server' check_pup_runtime 1
+    check_item permissions 'Botpanel executable permissions' check_permissions 1
+    check_active_runtime
+    if [ "$active_runtime" -eq 1 ]; then
+        log 'Live botpanel/Steam/TF2 processes detected; disruptive repairs will be deferred.'
+    fi
+}
+
+repair_dependencies() {
+    log 'Installing distro dependencies via install-deps...'
+    bash "$repo_root/install-deps"
+}
+
+repair_node_dependencies() {
+    log 'Installing web-panel Node dependencies...'
+    (cd "$web_panel_root" && npm install)
+    if [ -d "$web_panel_root/forever" ] && [ -f "$web_panel_root/forever/package.json" ]; then
+        (cd "$web_panel_root/forever" && npm install)
+    fi
+    if [ -x "$web_panel_root/node_modules/.bin/browserify" ]; then
+        mkdir -p "$web_panel_root/public"
+        (cd "$web_panel_root" && ./node_modules/.bin/browserify script.js -o public/bundle.js)
+    fi
+}
+
+repair_steam_downgrade() {
+    if [ "$active_runtime" -eq 1 ]; then
+        manual_notes+=("Steam downgrade deferred because the botpanel is live; stop it and rerun fix-all.")
+        return 1
+    fi
+    log "Downgrading Steam to pinned VGUI build $target_version..."
+    CAT_STEAM_ROOT="$steam_root" CAT_SHARED_STEAM_ROOT="$shared_steam_root" \
+        CAT_STEAM_ARCHIVE_URL="$archive_url" \
+        bash "$repo_root/scripts/downgrade_steam_vgui.sh" --force
+}
+
+repair_pup_runtime() {
+    log 'Building/installing nullhook textmode runtime...'
+    CATHOOK_DEV_MODE=1 bash "$script_dir/update" --dev
+}
+
+repair_textmode_libraries() {
+    log 'Building/installing paired Steam text-mode libraries...'
+    make -C "$textmode_root" all verify
+    make -C "$textmode_root" ARCH=64 all verify
+    run_as_root install -d -m 0755 \
+        "$install_root/botpanel/cat-steamtxtmode/bin/lib64" \
+        "$install_root/botpanel/cat-steamtxtmode/bin/libx64"
+    run_as_root install -m 0755 "$textmode_root/bin/lib64/libcatsteamtxtmode.so" \
+        "$install_root/botpanel/cat-steamtxtmode/bin/lib64/libcatsteamtxtmode.so"
+    run_as_root install -m 0755 "$textmode_root/bin/libx64/libcatsteamtxtmode.so" \
+        "$install_root/botpanel/cat-steamtxtmode/bin/libx64/libcatsteamtxtmode.so"
+}
+
+patch_steam_script() {
+    local target="$1"
+    local expression
+    [ -f "$target" ] || return 1
+    grep -Fq 'CAT_STEAM_TXTMODE_PRELOAD' "$target" && return 0
+    grep -Fq 'elif [ -z "$STEAM_DEBUGGER" ]; then' "$target" || return 1
+    grep -Fq '"$STEAMROOT/$STEAMEXEPATH" "$@"' "$target" || return 1
+    run_as_root cp -an "$target" "$target.fix-all.original" 2>/dev/null || true
+    expression='s{elif \[ -z "\$STEAM_DEBUGGER" \]; then\n\t"\$STEAMROOT/\$STEAMEXEPATH" "\$@"}{elif [ -z "\$STEAM_DEBUGGER" ]; then\n\tif [ -n "\${CAT_STEAM_TXTMODE_PRELOAD-}" ]; then\n\t\tLD_PRELOAD="\$CAT_STEAM_TXTMODE_PRELOAD" "\$STEAMROOT/\$STEAMEXEPATH" "\$@"\n\telse\n\t\t"\$STEAMROOT/\$STEAMEXEPATH" "\$@"\n\tfi}'
+    run_as_root perl -0pi -e "$expression" "$target"
+    grep -Fq 'CAT_STEAM_TXTMODE_PRELOAD' "$target"
+}
+
+repair_steam_shell() {
+    local target
+    for target in "$shared_steam_root/steam.sh" "$steam_root/steam.sh"; do
+        if [ -f "$target" ]; then
+            patch_steam_script "$target" && return 0
+        fi
+    done
+    return 1
+}
+
+repair_webhelper_wrapper() {
+    local target="$shared_steam_root/ubuntu12_64/steamwebhelper.sh"
+    [ -d "$shared_steam_root/ubuntu12_64" ] || return 1
+    if [ -f "$target" ] && ! grep -Fq 'libx64/libcatsteamtxtmode.so' "$target"; then
+        run_as_root cp -an "$target" "$target.fix-all.original" 2>/dev/null || true
+    fi
+    run_as_root install -m 0755 "$textmode_root/steamwebhelper.sh" "$target"
+    bash -n "$target"
+}
+
+repair_permissions() {
+    chmod 0755 "$script_dir/fix-all" "$script_dir/start" "$script_dir/stop" "$script_dir/update" \
+        "$script_dir/install-catbots" "$script_dir/install-instances" "$script_dir/fix-oldshi" 2>/dev/null || true
+    chmod 0755 "$textmode_root/steamwebhelper.sh" 2>/dev/null || true
+    chmod 0755 "$textmode_root/bin"/lib64/libcatsteamtxtmode.so "$textmode_root/bin"/libx64/libcatsteamtxtmode.so 2>/dev/null || true
+}
+
+repair_all() {
+    local key
+    if [ "$network_ok" -ne 1 ]; then
+        log 'Internet is unavailable; skipping dependency installs, npm downloads, and Steam downgrade.'
+        manual_notes+=("Restore DNS/HTTPS connectivity, then rerun fix-all for online repairs.")
+    else
+        for key in "${failure_keys[@]}"; do
+            case "$key" in
+                commands|multilib)
+                    repair_dependencies || manual_notes+=("Dependency installer failed; install the reported packages manually.")
+                    break
+                    ;;
+            esac
+        done
+        for key in "${failure_keys[@]}"; do
+            case "$key" in
+                steam_version)
+                    repair_steam_downgrade || true
+                    ;;
+                node_dependencies)
+                    repair_node_dependencies || manual_notes+=("npm repair failed; run npm install manually in $web_panel_root.")
+                    ;;
+            esac
+        done
+    fi
+
+    for key in "${failure_keys[@]}"; do
+        case "$key" in
+            textmode_source|textmode_deployed|textmode_deps)
+                repair_textmode_libraries || manual_notes+=("Steam text-mode library build/install failed; inspect the compiler output.")
+                break
+                ;;
+        esac
+    done
+    for key in "${failure_keys[@]}"; do
+        case "$key" in
+            pup_runtime)
+                repair_pup_runtime || manual_notes+=("Pup runtime build/install failed; inspect the compiler output.")
+                break
+                ;;
+        esac
+    done
+    for key in "${failure_keys[@]}"; do
+        case "$key" in
+            steam_shell)
+                repair_steam_shell || manual_notes+=("Steam launcher could not be patched automatically; inspect the selected Steam root.")
+                break
+                ;;
+            webhelper_wrapper)
+                repair_webhelper_wrapper || manual_notes+=("steamwebhelper wrapper could not be installed automatically.")
+                break
+                ;;
+            permissions)
+                repair_permissions
+                break
+                ;;
+        esac
+    done
+}
+
+if [ "$(uname -s 2>/dev/null || true)" != Linux ]; then
+    echo 'fix-all requires Linux.' >&2
+    exit 1
+fi
+
+run_checks
+
+if [ "${#failure_keys[@]}" -eq 0 ]; then
+    printf '\nAll checks passed.\n'
+    exit 0
+fi
+
+printf '\nProblems found: %d\n' "${#failure_keys[@]}"
+if [ "$check_only" -eq 1 ]; then
+    printf 'Check-only mode selected; no repairs run.\n'
+    exit 1
+fi
+
+if [ "$yes_mode" -ne 1 ]; then
+    printf '\n1) yes, fix everything fixable\n'
+    printf '2) no, I will do it manually\n'
+    printf 'Choose [2]: '
+    read -r answer || answer=""
+    case "$answer" in
+        1|y|Y|yes|YES)
+            ;;
+        *)
+            printf 'No repairs run; fix it manually.\n'
+            exit 1
+            ;;
+    esac
+fi
+
+repair_all
+
+run_checks
+
+if [ "${#failure_keys[@]}" -eq 0 ]; then
+    printf '\nAll checks passed after repair.\n'
+    exit 0
+fi
+
+printf '\nUnresolved items:\n'
+local_index=0
+for key in "${failure_keys[@]}"; do
+    printf '  - %s\n' "${failure_labels[$local_index]}"
+    local_index=$((local_index + 1))
+done
+for note in "${manual_notes[@]}"; do
+    printf '  - %s\n' "$note"
+done
+printf '\nSome items still require manual action.\n'
+exit 1

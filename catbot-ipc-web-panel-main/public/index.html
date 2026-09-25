@@ -1,0 +1,153 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>cathook</title>
+        <link rel="stylesheet" href="style.css">
+        <link rel="stylesheet" href="vgui.css">
+        <script src="bundle.js"></script>
+    </head>
+    <body class="vgui-container vgui-font">
+
+        <!-- ===== HEADER ===== -->
+        <div id="header-bar">
+            <span id="header-title">⚙ cathook</span>
+            <span id="header-status">
+                Status: <span id="status-text">Initializing</span>
+            </span>
+        </div>
+
+        <!-- ===== LOGIN (hidden by default) ===== -->
+        <div id="container-login" class="vgui-outset" style="display:none"></div>
+
+        <!-- ===== COMMAND BAR ===== -->
+        <div id="cmd-bar">
+            <label class="bar-label">⌨ Command (all bots)</label>
+            <div class="bar-row">
+                <input type="text" id="console" placeholder="e.g.  say hello" class="vgui-inset cmd-input">
+                <input type="button" id="console-send" value="Send" class="btn-primary">
+            </div>
+        </div>
+
+        <!-- ===== CONTROL PANEL ===== -->
+        <div id="control-panel">
+
+            <!-- Group: Bot controls -->
+            <div class="ctrl-group">
+                <div class="ctrl-group-title">🤖 Bot Controls</div>
+                <div class="ctrl-group-body">
+                    <input type="button" id="bot-restartall"   value="↺ Restart All"   class="btn-warn">
+                    <input type="button" id="bot-terminateall" value="✕ Terminate All" class="btn-danger">
+                    <input type="button" id="bot-refresh"      value="↻ Refresh"       class="btn-neutral">
+                </div>
+            </div>
+
+            <!-- Group: Quota -->
+            <div class="ctrl-group">
+                <div class="ctrl-group-title">📊 Quota</div>
+                <div class="ctrl-group-body ctrl-inline">
+                    <label class="ctrl-label">Bots</label>
+                    <input id="bot-quota" type="number" min="0" max="254" step="1" value="3" class="vgui-inset ctrl-num">
+                    <input id="bot-quota-apply" type="button" value="Apply" class="btn-primary">
+
+                    <div class="ctrl-sep"></div>
+
+                    <label class="ctrl-label">Max concurrent</label>
+                    <input id="bot-concurrent" type="number" min="1" step="1" value="3" class="vgui-inset ctrl-num">
+                    <input id="bot-concurrent-apply" type="button" value="Apply" class="btn-primary">
+                </div>
+            </div>
+
+            <!-- Group: Auto settings -->
+            <div class="ctrl-group">
+                <div class="ctrl-group-title">🔄 Auto Settings</div>
+                <div class="ctrl-group-body ctrl-inline">
+                    <label class="chk-label">
+                        <input type="checkbox" id="autorestart-bots">
+                        Auto-restart nonresponsive bots
+                    </label>
+                    <label class="chk-label">
+                        <input type="checkbox" id="ban-tracker-enabled">
+                        Account ban tracker
+                    </label>
+                    <div class="ctrl-sep"></div>
+                    <label class="ctrl-label">Steam login timeout</label>
+                    <input id="steam-login-timeout" type="number" min="0" step="1" value="70" class="vgui-inset ctrl-num">
+                    <span class="ctrl-unit">s</span>
+                    <input id="steam-login-timeout-apply" type="button" value="Apply" class="btn-primary">
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ===== BOT TABLE ===== -->
+        <div id="table-container">
+            <table id="clients" class="vgui-table vgui-inset">
+                <colgroup>
+                    <col style="width: 170px">
+                    <col style="width: 52px">
+                    <col style="width: 100px">
+                    <col style="width: 120px">
+                    <col style="width: 60px">
+                    <col style="width: 110px">
+                    <col style="width: 72px">
+                    <col style="width: 55px">
+                    <col style="width: 34px">
+                    <col style="width: 150px">
+                    <col style="width: 90px">
+                    <col style="width: 72px">
+                    <col style="width: 64px">
+                    <col style="width: 45px">
+                    <col style="width: 50px">
+                    <col style="width: 45px">
+                    <col style="width: 48px">
+                    <col style="width: 72px">
+                    <col style="width: 45px">
+                    <col style="width: 45px">
+                    <col style="width: 62px">
+                    <col style="width: 62px">
+                    <col style="width: 115px">
+                    <col style="width: 90px">
+                    <col style="width: 48px">
+                    <col style="width: 42px">
+                </colgroup>
+                <tr>
+                    <td>Actions</td>
+                    <td>↺</td>
+                    <td>Bot Name</td>
+                    <td>State</td>
+                    <td>Steam</td>
+                    <td>Ban</td>
+                    <td>Uptime</td>
+                    <td>PID</td>
+                    <td>ID</td>
+                    <td>IPC Status</td>
+                    <td>Name</td>
+                    <td>Queue</td>
+                    <td>Total Score</td>
+                    <td>Score</td>
+                    <td>Shots</td>
+                    <td>Hit%</td>
+                    <td>Head%</td>
+                    <td>Connected</td>
+                    <td>Alive</td>
+                    <td>Team</td>
+                    <td>Class</td>
+                    <td>HP</td>
+                    <td>Server IP</td>
+                    <td>Map</td>
+                    <td>Players</td>
+                    <td>Bots</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- ===== FOOTER ===== -->
+        <div id="footer">
+            <hr>
+            <span class="nohighlight">Nullware 2026 | <a href="https://github.com/NullwareN" target="_blank">github</a></span>
+        </div>
+
+    </body>
+</html>

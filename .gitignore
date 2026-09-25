@@ -1,0 +1,55 @@
+# secrets / live data — never commit
+accounts.txt
+accounts*.txt
+discord.webhook
+ch-settings.json
+apikey
+.env
+.env.*
+*.pem
+*.key
+cat-webpanel-password
+**/cat-webpanel-password
+
+# runtime / local
+user_instances/
+users/
+steams/
+logs/
+*.log
+*.log.old
+panel.log.old
+inject.log
+core
+*.core
+ipc-server.log
+
+# node / build
+node_modules/
+**/node_modules/
+package-lock.json
+bin/
+*.o
+*.d
+build/
+build-debug/
+build-textmode/
+kisak/
+public/bundle.js
+public/bundle.js.tmp
+
+# editor / os
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+/nullhook/
+cathook-location
+catbot-ipc-server
+catbot-ipc-web-panel
+account-generator
+catbot-database
+catbot
+just-disable-vac

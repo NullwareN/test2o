@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+quiet="${CAT_FIX_PERMISSIONS_QUIET:-0}"
+
+usage() {
+    cat <<'EOF'
+Usage: ./botpanel/fix_permissions [--once] [--interval SECONDS] [-silent]
+
+Permission repair is disabled.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --once)
+            ;;
+        --interval)
+            if [ "$#" -lt 2 ]; then
+                echo "--interval requires a value." >&2
+                exit 1
+            fi
+            shift
+            ;;
+        --quiet | -silent | --silent)
+            quiet=1
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown fix_permissions option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+if [ "$quiet" != "1" ]; then
+    printf '[fix_permissions] permission repair disabled\n'
+fi
+
+exit 0
