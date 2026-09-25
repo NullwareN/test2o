@@ -237,18 +237,29 @@ json echo(const json &args)
 
 json connect(const json &args)
 {
-    if (ipc_peer)
+    // A failed Connect() used to leave ipc_peer set with memory == nullptr.
+    // Every later connect then returned "already connected" while every query
+    // returned "not connected", and the panel stayed blind to live peers.
+    if (ipc_peer && ipc_peer->memory)
         throw std::runtime_error("already connected");
+    ipc_peer.reset();
     if (has_key(args, "server") && args["server"].get<std::string>() != cathook_ipc_name)
         throw std::runtime_error("custom ipc server names are not supported by this build");
-    ipc_peer = std::make_unique<peer_t>(cathook_ipc_name, false, false, true);
-    ipc_peer->Connect();
+    try
+    {
+        ipc_peer = std::make_unique<peer_t>(cathook_ipc_name, false, false, true);
+        ipc_peer->Connect();
+    }
+    catch (...)
+    {
+        ipc_peer.reset();
+        throw;
+    }
     return json{};
 }
 
 json disconnect(const json &)
 {
-    require_connected();
     ipc_peer.reset();
     return json{};
 }

@@ -1269,7 +1269,7 @@ function steam_boot_delay_allows_launch(time) {
 function steam_login_timeout_seconds() {
     const value = Number.parseInt(config.auto_restart_steam_if_not_logged_within, 10);
     if (!Number.isSafeInteger(value) || value < 0)
-        return 70;
+        return 60;
 
     return value;
 }
@@ -4982,7 +4982,9 @@ class Bot extends EventEmitter {
                         if (!manager_allows_start && this.manager) {
                             const queue_index = this.manager.start_queue_index(this);
                             const queue_head = this.manager.start_lane.length ? this.manager.start_lane[0].name : 'none';
-                            const blocked_by = 'start slots full';
+                            const steam_boots = this.manager.count_active_steam_boots();
+                            const steam_boot_max = this.manager.max_steam_boots();
+                            const blocked_by = steam_boots >= steam_boot_max ? 'steam boot slots full' : 'start slots full';
                             this.log(`Waiting for start lane position ${queue_index + 1}/${this.manager.start_lane.length}, head=${queue_head}, ${blocked_by}, active=${this.manager.count_active_starts()}/${max_concurrent_bots()}`);
                         } else if (!this.account)
                             this.log('Waiting for account');

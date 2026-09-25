@@ -23,11 +23,6 @@ for system_path_entry in /usr/local/sbin /usr/sbin /sbin; do
 done
 export PATH
 
-if [ "$(id -u)" -eq 0 ]; then
-    echo "This script must not be run as root. Run it as your normal Linux user." >&2
-    exit 1
-fi
-
 exec 9>"$start_lock"
 if ! flock -n 9; then
     lock_holder="$(head -n1 "$start_lock" 2>/dev/null | tr -cd '0-9')"
@@ -655,6 +650,60 @@ ensure_binaries() {
     echo "Using cathook libraries from $source_root"
 }
 
+ensure_vpn_active() {
+    local vpn_status vpn_interface route_interface
+
+    if ! command -v nordvpn >/dev/null 2>&1; then
+        echo "NordVPN is required; refusing to start bots without it." >&2
+        exit 1
+    fi
+
+    vpn_status="$(nordvpn status 2>&1 || true)"
+    if ! printf '%s\n' "$vpn_status" | grep -q '^Status: Connected$'; then
+        echo "NordVPN is not connected; refusing to start bots." >&2
+        printf '%s\n' "$vpn_status" >&2
+        exit 1
+    fi
+
+    vpn_interface="${CATHOOK_NET_INTERFACE:-}"
+    if [ -z "$vpn_interface" ]; then
+        for candidate in nordtun nordlynx tun0 tun1 wg0 wg1; do
+            if ip link show dev "$candidate" >/dev/null 2>&1; then
+                vpn_interface="$candidate"
+                break
+            fi
+        done
+    fi
+
+    case "$vpn_interface" in
+        nordtun|nordlynx|tun*|wg*) ;;
+        *)
+            echo "Could not identify a NordVPN tunnel interface; refusing to start bots." >&2
+            exit 1
+            ;;
+    esac
+
+    if ! ip link show dev "$vpn_interface" 2>/dev/null | grep -Eq '<[^>]*,UP(,|>)'; then
+        echo "NordVPN interface $vpn_interface is not up; refusing to start bots." >&2
+        exit 1
+    fi
+
+    route_interface="$(ip -o -4 route get 1.1.1.1 2>/dev/null | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && (i + 1) <= NF) {
+                    print $(i + 1)
+                    exit
+                }
+            }
+        }')"
+    if [ -n "$route_interface" ] && [ "$route_interface" != "$vpn_interface" ] && [ "$route_interface" != "nordtun" ] && [ "$route_interface" != "nordlynx" ]; then
+        echo "Warning: host default for 1.1.1.1 is $route_interface; bots still require NordVPN ($vpn_interface)." >&2
+    fi
+
+    export CATHOOK_NET_INTERFACE="$vpn_interface"
+    echo "NordVPN connected; bots use the host tunnel ($CATHOOK_NET_INTERFACE)."
+}
 
 find_shared_library() {
     local library_name="$1"
@@ -1481,6 +1530,11 @@ if [ "$(uname -s)" != "Linux" ]; then
     exit 1
 fi
 
+if [ "$(id -u)" -eq 0 ]; then
+    echo "This script must not be run as root. Run it as your normal Linux user." >&2
+    exit 1
+fi
+
 load_discord_webhook() {
     local webhook_file="$setup_root/discord.webhook"
     if [ -n "${CAT_DISCORD_WEBHOOK:-}" ]; then
@@ -1495,6 +1549,7 @@ load_discord_webhook() {
 
 source_os_release
 load_discord_webhook
+ensure_vpn_active
 install_missing_dependencies
 ensure_workspace_permissions
 select_display_backend

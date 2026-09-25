@@ -28,7 +28,7 @@ const default_config = {
     chunked_x_display_max_clients: 512,
     per_bot_x_display: true,
     per_bot_x_display_base: 100,
-    auto_restart_steam_if_not_logged_within: default_nonnegative_integer(process.env.CAT_STEAM_TIMEOUT_SECONDS, 120)
+    auto_restart_steam_if_not_logged_within: default_nonnegative_integer(process.env.CAT_STEAM_TIMEOUT_SECONDS, 60)
 };
 
 function load_settings() {

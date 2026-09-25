@@ -1,85 +1,67 @@
-/* ============================================================
-   cathook panel — vgui.css
-   Base widget styles (inputs, table, checkboxes)
-   ============================================================ */
 
 .vgui-font {
-    color: #e8e8e8;
-    font-family: "Tahoma", "Segoe UI", sans-serif;
-    font-size: 12px;
+    color: #d8dfd3;
+
+    font-family: "Tahoma", sans-serif;
+    font-size: 10px;
 }
 
-/* ── Input base ───────────────────────────────────────────── */
 input {
     text-align: left;
-    font-family: inherit;
-    font-size: 11px;
 }
 
-input:not([type=button]):not([type=checkbox]),
-.vgui-inset {
-    border: 1px solid #2a2a2a;
-    border-bottom-color: #444444;
-    border-right-color: #444444;
-    background: #0f0f0f;
-    color: #e8e8e8;
-    outline: none;
-    transition: border-color 0.1s;
+input:not([type=button]), .vgui-inset {
+    border-bottom: 1px solid #899180;
+    border-right: 1px solid #899180;
+    border-top: 1px solid #282f22;
+    border-left: 1px solid #282f22;
+    background: #3f4737;
+    color: #d8dfd3;
 }
 
-input:not([type=button]):not([type=checkbox]):focus,
-.vgui-inset:focus {
-    border-color: #555555;
-    background: #141414;
-}
-
-input[type=button]:not(:active),
-.vgui-outset {
-    border: 1px solid #2a2a2a;
-    border-top-color: #444444;
-    border-left-color: #444444;
-    color: #cccccc;
-    background: #1e1e1e;
-    cursor: pointer;
-}
-
-input[type=button]:not(:active):hover,
-.vgui-outset:hover {
-    background: #2a2a2a;
-    color: #ffffff;
+input[type=button]:not(:active), .vgui-outset {
+    border-top: 1px solid #899180;
+    border-left: 1px solid #899180;
+    border-bottom: 1px solid #282f22;
+    border-right: 1px solid #282f22;
+    color: #d8dfd3;
+    background: #4d5844;
 }
 
 input[type=button]:active {
-    border: 1px solid #444444;
-    border-bottom-color: #222222;
-    border-right-color: #222222;
-    background: #111111;
-    color: #aaaaaa;
+    border-bottom: 1px solid #899180;
+    border-right: 1px solid #899180;
+    border-top: 1px solid #282f22;
+    border-left: 1px solid #282f22;
+    background: #3f4737;
+    color: #d8dfd3;
 }
 
-/* ── Container ────────────────────────────────────────────── */
 .vgui-container {
-    background: #0a0a0a;
+    padding: 4px;
+    background: #4d5844;
 }
 
-/* ── Select ───────────────────────────────────────────────── */
 .vgui-select {
     display: block;
     min-width: 8em;
-    padding: 4px;
-    padding-right: 18px;
-    border: 1px solid #2a2a2a;
-    border-bottom-color: #444444;
-    border-right-color: #444444;
-    background: url('vgui-dropdown.png') #0f0f0f no-repeat right 3px center;
-    color: #e8e8e8;
-    font-family: inherit;
-    font-size: 11px;
+    padding: 3px;
+    padding-right: 16px;
+    border-bottom: 1px solid #899180;
+    border-right: 1px solid #899180;
+    border-top: 1px solid #282f22;
+    border-left: 1px solid #282f22;
+    background: url('vgui-dropdown.png') #3f4737 no-repeat right 2px center;
+    color: #d8dfd3;
 }
 
-.vgui-select-hidden { display: none; }
+.vgui-select-hidden {
+    display: none;
+}
 
-.vgui-select-container { position: relative; }
+.vgui-select-container {
+    position: relative;
+}
 
 .vgui-select-list {
     display: block;
@@ -94,143 +76,115 @@ input[type=button]:active {
     z-index: 3;
     padding: 0;
     margin-top: 2px;
-    border: 1px solid #333333;
-    background: #111111;
 }
 
 .vgui-select-option {
-    padding: 4px 6px;
+    padding: 3px;
     width: 100%;
-    font-size: 11px;
-    color: #cccccc;
-    cursor: pointer;
 }
 
 .vgui-select-option:hover {
-    background: #2a2a2a;
-    color: #ffffff;
+    background: #958831;
 }
 
 ::selection {
-    background: rgba(255,255,255,0.2);
-    color: #ffffff;
+    background: rgba(149, 136, 49, 0.996);
+    color: white;
 }
 
-/* ── Table ────────────────────────────────────────────────── */
 .vgui-table {
-    font-size: 11px;
+    font-size: 10px;
     border-collapse: separate;
-    border-spacing: 0;
+    border-spacing: 0px;
 }
 
 .vgui-table td {
-    padding: 4px 6px;
+    padding: 2px 6px;
     min-width: 3em;
-    line-height: 16px;
 }
 
-/* Alternating rows */
-.vgui-table tbody tr:nth-child(even) {
-    background: rgba(255,255,255,0.03);
+.vgui-table tbody tr:nth-child(even)
+{
+    background: rgba(0, 0, 0, 0.15); 
 }
 
-/* Header row */
 .vgui-table tbody tr:first-child {
-    background: #1a1a1a;
+    background: #4d5844;
 }
 
 .vgui-table tbody tr:first-child td {
-    border-bottom: 2px solid #333333;
-    padding: 6px 6px;
+    border-top: 1px solid #899180;
+    border-left: 1px solid #899180;
+    border-bottom: 1px solid #282f22;
+    border-right: 1px solid #282f22;
 }
 
-/* Row hover */
-.vgui-table tbody tr:not(:first-child):hover {
-    background: rgba(255,255,255,0.06);
-}
-
-/* ── Input sizing ─────────────────────────────────────────── */
 input:not([type=checkbox]) {
-    padding: 4px 6px;
+    padding: 3px;
+    font-size: 10px;
 }
 
 input:not([type=checkbox]):not([type=button]) {
-    min-width: 50px;
+    min-width: 62px;
 }
 
 input[type=button] {
-    min-width: 55px;
-    padding: 4px 8px;
+    min-width: 62px;
 }
 
-/* ── Checkbox ─────────────────────────────────────────────── */
-input[type="checkbox"] {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 13px;
-    height: 13px;
-    margin: 0;
-    vertical-align: -2px;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-
-input[type="checkbox"]:before {
-    border: 1px solid #444444;
-    border-bottom-color: #555555;
-    border-right-color: #555555;
-    background: #0f0f0f;
+input[type=checkbox]:before {
+    border-bottom: 1px solid #899180;
+    border-right: 1px solid #899180;
+    border-top: 1px solid #282f22;
+    border-left: 1px solid #282f22;
+    background: #3f4737;
     content: "";
     display: inline-block;
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
 }
 
-input[type="checkbox"]:checked:before {
-    background: url('vgui-checkbox.png') #0f0f0f;
-    filter: invert(1) brightness(2);
+.vgui-button-centered {
+    text-align: center;
 }
 
-input[type="checkbox"]:hover:before {
-    border-color: #666666;
-    background-color: #1a1a1a;
+input[type=checkbox]:checked:before {
+    background: url('vgui-checkbox.png') #3f4737;
 }
 
-/* ── Number input — hide spinners ─────────────────────────── */
-input[type="number"] {
-    -moz-appearance: textfield;
-    appearance: none;
-}
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-}
-
-/* ── Button variants ──────────────────────────────────────── */
-.vgui-button-centered { text-align: center; }
-
-/* ── Disabled ─────────────────────────────────────────────── */
 [disabled], .vgui-disabled {
-    background: #141414 !important;
-    color: #444444 !important;
-    cursor: not-allowed !important;
+    background: #4b5742 !important;
+    color: #a2ab96 !important;
 }
 
-/* ── Utility ──────────────────────────────────────────────── */
-.nopad    { padding: 0; }
-.vmiddle * { vertical-align: middle; }
-
-*:focus { outline: none; }
-
-hr {
-    border: 0;
-    border-top: 1px solid #1a1a1a;
-    border-bottom: 1px solid #2a2a2a;
-    margin: 6px 0;
+.noselect {
+    cursor: default;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 option:hover {
-    background: #2a2a2a;
-    color: #ffffff;
+    background: #958831;
+}
+
+*:focus {
+    outline: none;
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid #282f22;
+    border-bottom: 1px solid #899180;
+}
+
+.nopad {
+    padding: 0;
+}
+
+.vmiddle * {
+    vertical-align: middle;
 }

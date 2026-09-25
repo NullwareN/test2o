@@ -202,7 +202,7 @@ class BotManager {
                 continue;
             lane.push(bot);
         }
-        lane.sort((left, right) => right.botid - left.botid);
+        lane.sort((left, right) => (left.last_steam_boot_at || 0) - (right.last_steam_boot_at || 0) || right.botid - left.botid);
         this.start_lane = lane;
         this.start_queue = lane;
     }
@@ -315,6 +315,7 @@ class BotManager {
             this.last_start_wave_time = time;
 
         this.last_steam_boot_time = time;
+        bot.last_steam_boot_at = time;
         this.granted_starts_this_tick++;
         Bot.lastStartTime = time;
         Bot.lastSteamBootTime = time;

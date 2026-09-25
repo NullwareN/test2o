@@ -6,7 +6,7 @@ repo_root="$script_dir"
 web_panel_root="$script_dir/catbot-ipc-web-panel-main"
 ipc_server_root="$script_dir/catbot-ipc-server-main"
 database_root="$script_dir/catbot-database"
-nullhook_url="${CAT_NULLHOOK_URL:-https://github.com/NullwareN/test}"
+nullhook_url="${CAT_NULLHOOK_URL:-https://github.com/sourceassembly/nullhook}"
 install_root="${CATHOOK_ROOT:-/opt/cathook}"
 steamapps_detect_log="${CAT_STEAMAPPS_DETECT_LOG:-/tmp/cat-steamapps-detect.log}"
 shared_steamapps="/opt/steamapps"
@@ -22,7 +22,7 @@ libcathook into CATHOOK_ROOT, rebuilds the IPC server and web panel.
 
 Environment:
   CATHOOK_SRC / NULLHOOK_SRC   Existing nullhook tree (otherwise ./nullhook)
-  CAT_NULLHOOK_URL             Clone URL (default NullwareN/test)
+  CAT_NULLHOOK_URL             Clone URL (default sourceassembly/nullhook)
   CATHOOK_ALLOW_DISCARD=1      Allow discarding local tracked changes
   CATHOOK_ROOT=/opt/cathook
   CAT_UPDATE_HOST_NAVMESHES=1
@@ -244,13 +244,13 @@ ensure_nullhook_src() {
     if src="$(find_nullhook_src)"; then
         if [ "$src" != "$script_dir/nullhook" ] && [ ! -e "$script_dir/nullhook" ]; then
             ln -s "$src" "$script_dir/nullhook"
-            echo "Linked $script_dir/nullhook -> $src" >&2
+            echo "Linked $script_dir/nullhook -> $src"
         fi
         printf '%s\n' "$src"
         return 0
     fi
-    echo "Cloning nullhook into $script_dir/nullhook" >&2
-    git clone --recurse-submodules "$nullhook_url" "$script_dir/nullhook" >&2
+    echo "Cloning nullhook into $script_dir/nullhook"
+    git clone --recurse-submodules "$nullhook_url" "$script_dir/nullhook"
     printf '%s\n' "$script_dir/nullhook"
 }
 
