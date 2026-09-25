@@ -658,8 +658,14 @@ ensure_binaries() {
 ensure_vpn_active() {
     local vpn_status vpn_interface route_interface
 
+    if [ "${CAT_SKIP_VPN:-0}" = "1" ]; then
+        echo "Warning: CAT_SKIP_VPN=1 — skipping NordVPN check. Bots will use the host network directly." >&2
+        return 0
+    fi
+
     if ! command -v nordvpn >/dev/null 2>&1; then
         echo "NordVPN is required; refusing to start bots without it." >&2
+        echo "To bypass this check (not recommended), set CAT_SKIP_VPN=1 before running ./start" >&2
         exit 1
     fi
 
